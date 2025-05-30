@@ -1,7 +1,7 @@
 # ConvNeXt-V2-UNet
 A U-Net architecture built with a modified ConvNeXt-V2 block, designed for enhanced flexibility by allowing different input and output channel configurations. This library currently focuses on standard U-Net applications; sparse versions suitable for autoencoding tasks are not yet implemented. 
 
-![denoising_example](figures/example_usage.pdf)
+![denoising_example](figures/denoising_example.png)
 
 ## Installation instructions
 
