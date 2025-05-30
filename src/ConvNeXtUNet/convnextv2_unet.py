@@ -4,7 +4,7 @@ from ConvNeXtUNet.convnextv2_style_blocks import GeneralizedBlock
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.models.layers import trunc_normal_
+from timm.layers import trunc_normal_
 from ConvNeXtUNet.utils import LayerNorm
 
 class ConvNeXtV2Encoder(nn.Module):
