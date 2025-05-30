@@ -1,0 +1,29 @@
+[project]
+name = "ConvNeXt-V2-UNet" # Must be unique on PyPI if you plan to publish
+version = "0.0.1"
+description = "A U-Net built in ConvNeXt-V2 style."
+authors = [
+    { name = "Ryan Mueller"},
+]
+readme = "README.md"
+requires-python = ">=3.8" 
+license = { file = "LICENSE" }
+keywords = ["python", "Machine Learning", "U-Net", "ConvNeXt", "CNN"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "torch>=1.18.0",
+    "torchvision>=0.9.0",
+    "timm>=0.3.2"
+    ]
+
+[project.urls]
+"Homepage" = "https://github.com/rymuelle/ConvNeXt-V2-UNet"
+"Bug Tracker" = "https://github.com/rymuelle/ConvNeXt-V2-UNet/issues"
+
+[build-system]
+requires = ["setuptools>=61.0"] 
+build-backend = "setuptools.build_meta" 
