@@ -13,6 +13,7 @@ class MultiScaleLoss(nn.Module):
                                            Should have the same length as the number of decoder outputs
                                            (including the final output). Defaults to None (equal weights).
     """
+
     def __init__(self, loss_criterion, weights=None):
         super().__init__()
         self.loss_criterion = loss_criterion
@@ -40,11 +41,15 @@ class MultiScaleLoss(nn.Module):
             weights = [1.0] * num_outputs
         else:
             if len(self.weights) != num_outputs:
-                raise ValueError(f"Number of weights ({len(self.weights)}) must match the number of outputs ({num_outputs}).")
+                raise ValueError(
+                    f"Number of weights ({len(self.weights)}) must match the number of outputs ({num_outputs})."
+                )
             weights = self.weights
 
         for i, output in enumerate(outputs):
-            scaled_target = F.interpolate(target, size=output.shape[2:], mode='bilinear', align_corners=False)
+            scaled_target = F.interpolate(
+                target, size=output.shape[2:], mode="bilinear", align_corners=False
+            )
 
             loss = self.loss_criterion(output, scaled_target)
             total_loss += weights[i] * loss
