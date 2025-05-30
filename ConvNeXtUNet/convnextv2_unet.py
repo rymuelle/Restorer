@@ -1,11 +1,11 @@
-from models.convnextv2 import Block 
-from models.convnextv2_style_blocks import GeneralizedBlock
+from ConvNeXtUNet.convnextv2 import Block 
+from ConvNeXtUNet.convnextv2_style_blocks import GeneralizedBlock
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.layers import trunc_normal_
-from models.utils import LayerNorm
+from ConvNeXtUNet.utils import LayerNorm
 
 class ConvNeXtV2Encoder(nn.Module):
     """ ConvNeXt V2 Style Encoder/Backbone
