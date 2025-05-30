@@ -1,6 +1,5 @@
-import pytest
 import torch
-from ConvNeXtUNet.convnextv2_unet import convnextv2unet_atto, convnextv2unet_base
+from ConvNeXtUNet.convnextv2_unet import convnextv2unet_atto
 
 def test_main_model_loads():
     """
@@ -8,6 +7,7 @@ def test_main_model_loads():
     """
     print("\nRunning test_main_model_loads...")
     model = convnextv2unet_atto()
+    print(model)
     print("Model loaded.")
 
 def test_model_prediction_with_valid_data():
@@ -19,4 +19,4 @@ def test_model_prediction_with_valid_data():
     test_data = torch.rand(1, 3, 32, 32)
     result = model(test_data)
     assert result.shape == test_data.shape
-    print(f"Prediction test passed.")
+    print("Prediction test passed.")
