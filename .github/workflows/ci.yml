@@ -4,9 +4,9 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  # Allows for manual running of workflow from action tab
+  workflow_dispatch:
 
-# Allows for manual running of workflow from action tab
-workflow_dispatch:
 
 jobs:
   build_and_test:
