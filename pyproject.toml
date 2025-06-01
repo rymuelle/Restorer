@@ -1,5 +1,5 @@
 [project]
-name = "ConvNeXt-V2-UNet" # Must be unique on PyPI if you plan to publish
+name = "ConvNeXt-V2-UNet"
 version = "0.0.1"
 description = "A U-Net built in ConvNeXt-V2 style."
 authors = [
