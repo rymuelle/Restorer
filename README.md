@@ -12,7 +12,7 @@ First, get a copy of the project:
 Bash
 
 ``` bash
-git clone https://github.com/your-username/ConvNeXt-V2-UNet.git
+git clone https://github.com/rymuelle/ConvNeXt-V2-UNet.git
 cd ConvNeXt-V2-UNet
 ```
 
