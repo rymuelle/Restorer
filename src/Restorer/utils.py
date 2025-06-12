@@ -113,14 +113,15 @@ class ConditionedChannelAttention(nn.Module):
     def __init__(self, dims, cat_dims):
         super().__init__()
         in_dim = dims + cat_dims
-        # self.mlp = nn.Sequential(
-        #     nn.Linear(in_dim, in_dim*2),
-        #     nn.GELU(),
-        #     nn.Linear(in_dim*2, dims)
-        # )
         self.mlp = nn.Sequential(
-            nn.Linear(in_dim, dims)
+            nn.Linear(in_dim, int(in_dim*1.5)),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(int(in_dim*1.5), dims)
         )
+        # self.mlp = nn.Sequential(
+        #     nn.Linear(in_dim, dims)
+        # )
         self.pool = nn.AdaptiveAvgPool2d(1)
 
     def forward(self, x, conditioning):
