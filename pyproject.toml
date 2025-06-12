@@ -1,14 +1,14 @@
 [project]
-name = "ConvNeXt-V2-UNet"
+name = "Restorer"
 version = "0.0.1"
-description = "A U-Net built in ConvNeXt-V2 style."
+description = "A U-Net built for image restoration."
 authors = [
     { name = "Ryan Mueller"},
 ]
 readme = "README.md"
 requires-python = ">=3.8" 
 license = { file = "LICENSE" }
-keywords = ["python", "Machine Learning", "U-Net", "ConvNeXt", "CNN"]
+keywords = ["python", "Machine Learning", "U-Net", "Image Restoration", "CNN"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -21,8 +21,8 @@ dependencies = [
     ]
 
 [project.urls]
-"Homepage" = "https://github.com/rymuelle/ConvNeXt-V2-UNet"
-"Bug Tracker" = "https://github.com/rymuelle/ConvNeXt-V2-UNet/issues"
+"Homepage" = "NA"
+"Bug Tracker" = "NA/issues"
 
 [build-system]
 requires = ["setuptools>=61.0"] 
