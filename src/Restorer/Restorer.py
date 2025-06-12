@@ -182,17 +182,24 @@ class NAFBlock0(nn.Module):
         x = self.dropout2(x)
 
         return (y + x * self.gamma, cond)
+    
 class Restorer(nn.Module):
 
-    def __init__(self, in_channel=3, out_channel=3, width=16, middle_blk_num=1, enc_blk_nums=[], dec_blk_nums=[], GCE_CONVS_nums=[]):
+    def __init__(self, in_channels=3, out_channels=3, width=16, middle_blk_num=1, enc_blk_nums=[], dec_blk_nums=[], GCE_CONVS_nums=[],
+                 cond_input = 1, cond_output=32):
         super().__init__()
 
-        self.film_gen =  FiLMGenerator(1, (width, width*2**len(enc_blk_nums), width))
-        self.film_block = FiLMBlock()
+        # self.film_gen =  FiLMGenerator(1, (width, width*2**len(enc_blk_nums), width, out_channels))
+        # self.film_block = FiLMBlock()
+        self.conditioning_gen =  nn.Sequential(
+            nn.Linear(cond_input, 64),
+            nn.ReLU(),
+            nn.Linear(64, cond_output)
+        )
 
-        self.intro = nn.Conv2d(in_channels=in_channel, out_channels=width, kernel_size=3, padding=1, stride=1, groups=1,
+        self.intro = nn.Conv2d(in_channels=in_channels, out_channels=width, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)
-        self.ending = nn.Conv2d(in_channels=width, out_channels=out_channel, kernel_size=3, padding=1, stride=1, groups=1,
+        self.ending = nn.Conv2d(in_channels=width, out_channels=out_channels, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)
 
         self.encoders = nn.ModuleList()
@@ -208,7 +215,7 @@ class Restorer(nn.Module):
             GCE_Convs = GCE_CONVS_nums[i]
             self.encoders.append(
                 nn.Sequential(
-                    *[CascadedGazeBlock(chan, GCE_Conv=GCE_Convs) for _ in range(num)]
+                    *[CascadedGazeBlock(chan, GCE_Conv=GCE_Convs, cond_chans=cond_output) for _ in range(num)]
                 )
             )
             self.downs.append(
@@ -218,7 +225,7 @@ class Restorer(nn.Module):
 
         self.middle_blks = \
             nn.Sequential(
-                *[NAFBlock0(chan) for _ in range(middle_blk_num)]
+                *[NAFBlock0(chan, cond_chans=cond_output) for _ in range(middle_blk_num)]
             )
 
         for i in range(len(dec_blk_nums)):
@@ -232,38 +239,34 @@ class Restorer(nn.Module):
             chan = chan // 2
             self.decoders.append(
                 nn.Sequential(
-                    *[NAFBlock0(chan) for _ in range(num)]
+                    *[NAFBlock0(chan, cond_chans=cond_output) for _ in range(num)]
                 )
             )
 
         self.padder_size = 2 ** len(self.encoders)
 
-    def forward(self, inp, iso):
+    def forward(self, inp, cond_in):
         # Conditioning:
-        film_params = self.film_gen(iso)
+        cond = self.conditioning_gen(cond_in)
 
         B, C, H, W = inp.shape
         inp = self.check_image_size(inp)
 
         x = self.intro(inp)
-        x = self.film_block(x, *film_params[0])
 
         encs = []
-
         for encoder, down in zip(self.encoders, self.downs):
-            x = encoder(x)
+            x = encoder((x, cond))[0]
             encs.append(x)
             x = down(x)
 
-        x = self.middle_blks(x)
-        x = self.film_block(x, *film_params[1])
+        x = self.middle_blks((x, cond))[0]
 
         for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
             x = up(x)
             x = x + enc_skip
-            x = decoder(x)
+            x = decoder((x, cond))[0]
 
-        x = self.film_block(x, *film_params[2])
         x = self.ending(x)
         #x = x + inp
 
@@ -275,5 +278,3 @@ class Restorer(nn.Module):
         mod_pad_w = (self.padder_size - w % self.padder_size) % self.padder_size
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h))
         return x
-
-
