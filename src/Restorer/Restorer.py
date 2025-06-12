@@ -1,168 +1,132 @@
+# ------------------------------------------------------------------------
+# Modified from NAFNet (https://github.com/megvii-research/NAFNet)
+# ------------------------------------------------------------------------
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from Restorer.utils import LayerNorm, GRN, FiLMBlock, FiLMGenerator, SimpleGate
-from timm.layers import DropPath
+from Restorer.utils import SimpleGate, ConditionedChannelAttention, FiLMBlock, FiLMGenerator, LayerNorm2d
 
-class Block(nn.Module):
-    """
-    Following design elements from ConvNext and NAFNet.
-    Args:
-        chans (int): Number of channels.
-        expansion_ratio (int): Expansion ratio for MLP layers.
-        drop_path (float): Stochastic depth rate. Default: 0.1
-    """
-
-    def __init__(self, chans, expansion_ratio=4, drop_path=0.1):
-        super().__init__()
-        self.dwconv = nn.Conv2d(
-            chans, chans, kernel_size=7, padding=3, groups=chans
-        )  # depthwise conv
-        self.norm = LayerNorm(chans, eps=1e-6)
-        self.pwconv1 = nn.Linear(
-            chans, expansion_ratio * chans
-        )  # pointwise/1x1 convs, implemented with linear layers
-        self.act = SimpleGate()
-        post_act_channels = expansion_ratio // 2 * chans
-        self.sca = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_channels=post_act_channels, out_channels=post_act_channels, kernel_size=1, padding=0, stride=1,
-                      groups=1, bias=True),
-        )
-        self.grn = GRN(post_act_channels)
-        self.pwconv2 = nn.Linear(post_act_channels, chans)
-        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
-
-
-    def forward(self, x, film=None):
-        input = x
-        x = self.dwconv(x)
-        x = x.permute(0, 2, 3, 1)  # (N, C, H, W) -> (N, H, W, C)
-        x = self.norm(x)
-        x = self.pwconv1(x) #4 * chans
-
-        x = x.permute(0, 3, 1, 2)
-        x = self.act(x) # 2 * chans
-        # This might be overloaded on channel attention like things. 
-        if film is not None: 
-            x = film(x)
-        x = self.sca(x) * x
-        x = x.permute(0, 2, 3, 1)
-
-        x = self.grn(x)
-        x = self.pwconv2(x)
-        x = x.permute(0, 3, 1, 2)  # (N, H, W, C) -> (N, C, H, W)
-        x = input + self.drop_path(x)
-        return x
-class LayerNormFunction(torch.autograd.Function):
-
-    @staticmethod
-    def forward(ctx, x, weight, bias, eps):
-        ctx.eps = eps
-        N, C, H, W = x.size()
-        mu = x.mean(1, keepdim=True)
-        var = (x - mu).pow(2).mean(1, keepdim=True)
-        y = (x - mu) / (var + eps).sqrt()
-        ctx.save_for_backward(y, var, weight)
-        y = weight.view(1, C, 1, 1) * y + bias.view(1, C, 1, 1)
-        return y
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        eps = ctx.eps
-
-        N, C, H, W = grad_output.size()
-        y, var, weight = ctx.saved_variables
-        g = grad_output * weight.view(1, C, 1, 1)
-        mean_g = g.mean(dim=1, keepdim=True)
-
-        mean_gy = (g * y).mean(dim=1, keepdim=True)
-        gx = 1. / torch.sqrt(var + eps) * (g - y * mean_gy - mean_g)
-        return gx, (grad_output * y).sum(dim=3).sum(dim=2).sum(dim=0), grad_output.sum(dim=3).sum(dim=2).sum(
-            dim=0), None
-
-class LayerNorm2d(nn.Module):
-
-    def __init__(self, channels, eps=1e-6):
-        super(LayerNorm2d, self).__init__()
-        self.register_parameter('weight', nn.Parameter(torch.ones(channels)))
-        self.register_parameter('bias', nn.Parameter(torch.zeros(channels)))
-        self.eps = eps
+    
+class depthwise_separable_conv(nn.Module):
+    def __init__(self, nin, nout, kernel_size = 3, padding = 0, stide = 1, bias=False):
+        super(depthwise_separable_conv, self).__init__()
+        self.pointwise = nn.Conv2d(nin, nout, kernel_size=1, bias=bias)
+        self.depthwise = nn.Conv2d(nin, nin, kernel_size=kernel_size, stride=stide, padding=padding, groups=nin, bias=bias)
 
     def forward(self, x):
-        return LayerNormFunction.apply(x, self.weight, self.bias, self.eps)
+        x = self.depthwise(x)
+        x = self.pointwise(x)
+        return x
+    
 
-# handle multiple input
-class MySequential(nn.Sequential):
-    def forward(self, *inputs):
-        for module in self._modules.values():
-            if type(inputs) == tuple:
-                inputs = module(*inputs)
-            else:
-                inputs = module(inputs)
-        return inputs
+class UpsampleWithFlops(nn.Upsample):
+    def __init__(self, size=None, scale_factor=None, mode='nearest', align_corners=None):
+        super(UpsampleWithFlops, self).__init__(size, scale_factor, mode, align_corners)
+        self.__flops__ = 0
 
-import time
-def measure_inference_speed(model, data, max_iter=200, log_interval=50):
-    model.eval()
+    def forward(self, input):
+        self.__flops__ += input.numel()
+        return super(UpsampleWithFlops, self).forward(input)
+    
+class GlobalContextExtractor(nn.Module):
+    def __init__(self, c, kernel_sizes=[3, 3, 5], strides=[3, 3, 5], padding=0, bias=False):
+        super(GlobalContextExtractor, self).__init__()
 
-    # the first several iterations may be very slow so skip them
-    num_warmup = 5
-    pure_inf_time = 0
-    fps = 0
+        self.depthwise_separable_convs = nn.ModuleList([
+            depthwise_separable_conv(c, c, kernel_size, padding, stride, bias)
+            for kernel_size, stride in zip(kernel_sizes, strides)
+        ])
 
-    # benchmark with 2000 image and take the average
-    for i in range(max_iter):
+    def forward(self, x):
+        outputs = []
+        for conv in self.depthwise_separable_convs:
+            x = F.gelu(conv(x))
+            outputs.append(x)
+        return outputs
 
-        torch.cuda.synchronize()
-        start_time = time.perf_counter()
-
-        with torch.no_grad():
-            model(*data)
-
-        torch.cuda.synchronize()
-        elapsed = time.perf_counter() - start_time
-
-        if i >= num_warmup:
-            pure_inf_time += elapsed
-            if (i + 1) % log_interval == 0:
-                fps = (i + 1 - num_warmup) / pure_inf_time
-                print(
-                    f'Done image [{i + 1:<3}/ {max_iter}], '
-                    f'fps: {fps:.1f} img / s, '
-                    f'times per image: {1000 / fps:.1f} ms / img',
-                    flush=True)
-
-        if (i + 1) == max_iter:
-            fps = (i + 1 - num_warmup) / pure_inf_time
-            print(
-                f'Overall fps: {fps:.1f} img / s, '
-                f'times per image: {1000 / fps:.1f} ms / img',
-                flush=True)
-            break
-    return fps
-
-class ConditionedChannelAttention(nn.Module):
-    def __init__(self, dims, cat_dims):
+class CascadedGazeBlock(nn.Module):
+    def __init__(self, c, GCE_Conv =2, DW_Expand=2, FFN_Expand=2, drop_out_rate=0, cond_chans=0):
         super().__init__()
-        in_dim = dims + cat_dims
-        self.mlp = nn.Sequential(
-            nn.Linear(in_dim, in_dim*2),
-            nn.GELU(),
-            nn.Linear(in_dim*2, dims)
-        )
-        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.dw_channel = c * DW_Expand
+        self.GCE_Conv = GCE_Conv
+        self.conv1 = nn.Conv2d(in_channels=c, out_channels=self.dw_channel, kernel_size=1,
+                                padding=0, stride=1, groups=1, bias=True)
+        self.conv2 = nn.Conv2d(in_channels=self.dw_channel, out_channels=self.dw_channel,
+                                kernel_size=3, padding=1, stride=1, groups=self.dw_channel,
+                               bias=True)
 
-    def forward(self, x, conditioning):
-        pool = (x)
-        conditioning = conditioning.unsqueeze(-1).unsqueeze(-1)
-        cat_channels = torch.cat([pool, conditioning], dim=1)
-        cat_channels = cat_channels.permute(0, 2, 3, 1)
-        ca = self.mlp(cat_channels).permute(0, 3, 1, 2)
-        return ca
+        
+        if self.GCE_Conv == 3:
+            self.GCE = GlobalContextExtractor(c=c, kernel_sizes=[3, 3, 5], strides=[2, 3, 4])
 
-class Block(nn.Module):
-    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
+            self.project_out = nn.Conv2d(int(self.dw_channel*2.5), c, kernel_size=1)
+
+            self.sca = ConditionedChannelAttention(int(self.dw_channel*2.5), cond_chans)
+            
+        else:
+            self.GCE = GlobalContextExtractor(c=c, kernel_sizes=[3, 3], strides=[2, 3])
+
+            self.project_out = nn.Conv2d(self.dw_channel*2, c, kernel_size=1)
+
+            self.sca = ConditionedChannelAttention(int(self.dw_channel*2), cond_chans)
+
+
+        # SimpleGate
+        self.sg = SimpleGate()
+
+        ffn_channel = FFN_Expand * c
+        self.conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+        self.conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+
+        #self.grn = GRN(ffn_channel // 2)
+
+        self.norm1 = LayerNorm2d(c)
+        self.norm2 = LayerNorm2d(c)
+
+        self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0. else nn.Identity()
+
+  
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+
+    def forward(self, input):
+        inp = input[0]
+        cond = input[1]
+        x = inp
+        b,c,h,w = x.shape
+        # # Nearest neighbor upsampling as part of the range fusion process
+        self.upsample = UpsampleWithFlops(size=(h,w), mode='nearest')
+
+        x = self.norm1(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = F.gelu(x)
+
+        # Global Context Extractor + Range fusion
+        x_1 , x_2 = x.chunk(2, dim=1)
+        if self.GCE_Conv == 3:
+            x1, x2, x3 = self.GCE(x_1 + x_2)
+            x = torch.cat([x, self.upsample(x1), self.upsample(x2), self.upsample(x3)], dim = 1)
+        else:
+            x1, x2 = self.GCE(x_1 + x_2)
+            x = torch.cat([x, self.upsample(x1), self.upsample(x2)], dim = 1)
+        x = self.sca(x, cond) * x
+        x = self.project_out(x)
+
+        x = self.dropout1(x)
+        #channel-mixing
+        y = inp + x * self.beta
+        x = self.conv4(self.norm2(y))
+        x = self.sg(x)
+        #x = self.grn(x)
+        x = self.conv5(x)
+        x = self.dropout2(x)
+
+        return (y + x * self.gamma, cond)
+
+class NAFBlock0(nn.Module):
+    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.0, cond_chans=0):
         super().__init__()
         dw_channel = c * DW_Expand
         self.conv1 = nn.Conv2d(in_channels=c, out_channels=dw_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
@@ -171,11 +135,7 @@ class Block(nn.Module):
         self.conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
         
         # Simplified Channel Attention
-        self.sca = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_channels=dw_channel // 2, out_channels=dw_channel // 2, kernel_size=1, padding=0, stride=1,
-                      groups=1, bias=True),
-        )
+        self.sca = ConditionedChannelAttention(dw_channel // 2, cond_chans)
 
         # SimpleGate
         self.sg = SimpleGate()
@@ -183,6 +143,8 @@ class Block(nn.Module):
         ffn_channel = FFN_Expand * c
         self.conv4 = nn.Conv2d(in_channels=c, out_channels=ffn_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
         self.conv5 = nn.Conv2d(in_channels=ffn_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
+
+        #self.grn = GRN(ffn_channel // 2)
 
         self.norm1 = LayerNorm2d(c)
         self.norm2 = LayerNorm2d(c)
@@ -193,7 +155,10 @@ class Block(nn.Module):
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
 
-    def forward(self, inp):
+    def forward(self, input):
+        inp = input[0]
+        cond = input[1]
+
         x = inp
 
         x = self.norm1(x)
@@ -201,33 +166,41 @@ class Block(nn.Module):
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.sg(x)
-        x = x * self.sca(x)
+        x = x * self.sca(x, cond)
         x = self.conv3(x)
 
         x = self.dropout1(x)
 
         y = inp + x * self.beta
 
+        #Channel Mixing
         x = self.conv4(self.norm2(y))
         x = self.sg(x)
+        #x = self.grn(x)
         x = self.conv5(x)
 
         x = self.dropout2(x)
 
-        return y + x * self.gamma
+        return (y + x * self.gamma, cond)
+    
 
+class Restorer(nn.Module):
 
-class CascadedGazeConditioned(nn.Module):
-
-    def __init__(self, in_channel=3, out_channel=3, width=16, middle_blk_num=1, enc_blk_nums=[], dec_blk_nums=[], GCE_CONVS_nums=[]):
+    def __init__(self, in_channels=3, out_channels=3, width=16, middle_blk_num=1, enc_blk_nums=[], dec_blk_nums=[], GCE_CONVS_nums=[],
+                 cond_input = 1, cond_output=32):
         super().__init__()
 
-        self.film_gen =  FiLMGenerator(1, (width, width*2**len(enc_blk_nums), width, out_channel))
-        self.film_block = FiLMBlock()
+        # self.film_gen =  FiLMGenerator(1, (width, width*2**len(enc_blk_nums), width, out_channels))
+        # self.film_block = FiLMBlock()
+        self.conditioning_gen =  nn.Sequential(
+            nn.Linear(cond_input, 64),
+            nn.ReLU(),
+            nn.Linear(64, cond_output)
+        )
 
-        self.intro = nn.Conv2d(in_channels=in_channel, out_channels=width, kernel_size=3, padding=1, stride=1, groups=1,
+        self.intro = nn.Conv2d(in_channels=in_channels, out_channels=width, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)
-        self.ending = nn.Conv2d(in_channels=width, out_channels=out_channel, kernel_size=3, padding=1, stride=1, groups=1,
+        self.ending = nn.Conv2d(in_channels=width, out_channels=out_channels, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)
 
         self.encoders = nn.ModuleList()
@@ -243,7 +216,7 @@ class CascadedGazeConditioned(nn.Module):
             GCE_Convs = GCE_CONVS_nums[i]
             self.encoders.append(
                 nn.Sequential(
-                    *[CascadedGazeBlock(chan, GCE_Conv=GCE_Convs) for _ in range(num)]
+                    *[CascadedGazeBlock(chan, GCE_Conv=GCE_Convs, cond_chans=cond_output) for _ in range(num)]
                 )
             )
             self.downs.append(
@@ -253,7 +226,7 @@ class CascadedGazeConditioned(nn.Module):
 
         self.middle_blks = \
             nn.Sequential(
-                *[NAFBlock0(chan) for _ in range(middle_blk_num)]
+                *[NAFBlock0(chan, cond_chans=cond_output) for _ in range(middle_blk_num)]
             )
 
         for i in range(len(dec_blk_nums)):
@@ -267,40 +240,35 @@ class CascadedGazeConditioned(nn.Module):
             chan = chan // 2
             self.decoders.append(
                 nn.Sequential(
-                    *[NAFBlock0(chan) for _ in range(num)]
+                    *[NAFBlock0(chan, cond_chans=cond_output) for _ in range(num)]
                 )
             )
 
         self.padder_size = 2 ** len(self.encoders)
 
-    def forward(self, inp, iso):
+    def forward(self, inp, cond_in):
         # Conditioning:
-        film_params = self.film_gen(iso)
+        cond = self.conditioning_gen(cond_in)
 
         B, C, H, W = inp.shape
         inp = self.check_image_size(inp)
 
         x = self.intro(inp)
-        x = self.film_block(x, *film_params[0])
 
         encs = []
-
         for encoder, down in zip(self.encoders, self.downs):
-            x = encoder(x)
+            x = encoder((x, cond))[0]
             encs.append(x)
             x = down(x)
 
-        x = self.middle_blks(x)
-        x = self.film_block(x, *film_params[1])
+        x = self.middle_blks((x, cond))[0]
 
         for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
             x = up(x)
             x = x + enc_skip
-            x = decoder(x)
+            x = decoder((x, cond))[0]
 
-        x = self.film_block(x, *film_params[2])
         x = self.ending(x)
-        x = self.film_block(x, *film_params[3])
         #x = x + inp
 
         return x[:, :, :H, :W]
@@ -311,5 +279,6 @@ class CascadedGazeConditioned(nn.Module):
         mod_pad_w = (self.padder_size - w % self.padder_size) % self.padder_size
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h))
         return x
+
 
 
