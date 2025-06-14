@@ -1,5 +1,5 @@
 # ------------------------------------------------------------------------
-# Modified from NAFNet (https://github.com/megvii-research/NAFNet)
+# Modified from CGNet 
 # ------------------------------------------------------------------------
 import torch
 import torch.nn as nn
@@ -278,3 +278,21 @@ class Restorer(nn.Module):
         mod_pad_w = (self.padder_size - w % self.padder_size) % self.padder_size
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h))
         return x
+    
+
+class AddPixelShuffleWithPassThrough(nn.Module):
+    def __init__(self, model, in_channels=4, out_channels=3):
+        super().__init__()
+        self.model = model
+        self.ps = nn.PixelShuffle(2)
+        self.upscale = nn.Sequential(
+            #nn.Conv2d(in_channels, in_channels, kernel_size=3, padding=1),
+            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
+        )
+
+    def forward(self, x, iso):
+        inp = x
+        x = self.model(x, iso)
+        x = self.ps(x)
+        res = self.upscale(inp)
+        return x + res
