@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch
 
 from pytorch_msssim import ms_ssim
+from pytorch_msssim.ssim import _ssim, _fspecial_gauss_1d
+
 import torch.nn.functional as F
 
 import torch_dct as dct_2d
@@ -20,8 +22,8 @@ class CombinedPerceptualLoss(nn.Module):
         lambda_frequency=0.0,
         lambda_chroma=0.0,
         lambda_luma=0.0,
-        lambda_luma_mse = 0.0,
-        lambda_luma_struct = 0.0,
+        lambda_luma_mse=0.0,
+        lambda_luma_struct=0.0,
         lambda_lpips=0.0,
         lambda_sharpness_loss=0.0,
         lambda_conservative_l1=0.0,
@@ -56,7 +58,6 @@ class CombinedPerceptualLoss(nn.Module):
         self.sharpness_loss = sharpness_loss
         self.conservative_l1_loss = conservative_l1
 
-
     def forward(self, output, inp, target):
         # Assumes output and target are gamma-compressed RGB [B, 3, H, W]
         loss = 0
@@ -70,17 +71,34 @@ class CombinedPerceptualLoss(nn.Module):
             )
         if self.lambda_ssim > 0:
             loss += self.lambda_ssim * (
-                1 - ms_ssim(output, target, data_range=1.0, size_average=True, weights = [0.0448, 0.2856, 0.3001, 0.2363, 0.1333])
+                1
+                - ms_ssim(
+                    output,
+                    target,
+                    data_range=1.0,
+                    size_average=True,
+                    weights=[0.0448, 0.2856, 0.3001, 0.2363, 0.1333],
+                )
             )
         if self.lambda_ssim_coarse > 0:
-            #[0, 0.298964, 0.314037, 0.247357, 0.139537]
+            # [0, 0.298964, 0.314037, 0.247357, 0.139537]
             weights = [0.1, 0.2, 0.448028, 0.352898, 0.199074]
             loss += self.lambda_ssim_coarse * (
-                1 - ms_ssim(output, target, data_range=1.0, size_average=True, weights = weights)
+                1
+                - ms_ssim(
+                    output, target, data_range=1.0, size_average=True, weights=weights
+                )
             )
         if self.lambda_ssim_fine > 0:
             loss += self.lambda_ssim_fine * (
-                1 - ms_ssim(output, target, data_range=1.0, size_average=True, weights = [1, 0, 0, 0, 0])
+                1
+                - ms_ssim(
+                    output,
+                    target,
+                    data_range=1.0,
+                    size_average=True,
+                    weights=[1, 0, 0, 0, 0],
+                )
             )
         if self.lambda_vgg > 0:
             vgg_output = apply_gamma(output)
@@ -112,7 +130,9 @@ class CombinedPerceptualLoss(nn.Module):
         if self.lambda_sharpness_loss > 0:
             loss += self.lambda_sharpness_loss * self.sharpness_loss(output, target)
         if self.lambda_conservative_l1 > 0:
-            loss += self.lambda_conservative_l1 * self.conservative_l1_loss(output, inp, target)
+            loss += self.lambda_conservative_l1 * self.conservative_l1_loss(
+                output, inp, target
+            )
         if self.lambda_luma_struct > 0:
             loss += self.lambda_luma_struct * self.luma_loss_struct(output, target)
         return loss
@@ -162,7 +182,8 @@ class ChromaLoss(torch.nn.Module):
         ycbcr_out = rgb_to_ycbcr(output)
         ycbcr_tgt = rgb_to_ycbcr(target)
         return self.loss_func(ycbcr_out[:, 1:], ycbcr_tgt[:, 1:])  # Only CB + CR
-    
+
+
 class LumaLoss(torch.nn.Module):
     def __init__(self, loss_func=F.l1_loss):
         super().__init__()
@@ -209,20 +230,19 @@ def apply_gamma(_tensor):
     return tensor
 
 
-def conservative_l1(pred, inp, gt, sout = 1, sin= 1/10):
-    same_side = (pred-gt)*(inp-gt)>0
-    between = (pred-gt)*(pred-inp)<0
-    diff = (pred-gt).abs()
-    
+def conservative_l1(pred, inp, gt, sout=1, sin=1 / 10):
+    same_side = (pred - gt) * (inp - gt) > 0
+    between = (pred - gt) * (pred - inp) < 0
+    diff = (pred - gt).abs()
+
     diff[between] *= sin
     diff[~same_side] *= sout
-    
+
     diff[same_side] *= sout
-    diff[same_side * ~between] += (gt-inp).abs()[same_side * ~between] * (sin - 1)
+    diff[same_side * ~between] += (gt - inp).abs()[same_side * ~between] * (sin - 1)
     return diff.mean()
 
 
-from pytorch_msssim.ssim import _ssim, _fspecial_gauss_1d
 def structural_loss(pred, gt):
     win_size, win_sigma = 11, 1.5
     win = _fspecial_gauss_1d(win_size, win_sigma)
@@ -236,4 +256,6 @@ def gradient_loss(pred, gt):
     gt_dx = gt[:, :, :, 1:] - gt[:, :, :, :-1]
     pred_dy = pred[:, :, 1:, :] - pred[:, :, :-1, :]
     gt_dy = gt[:, :, 1:, :] - gt[:, :, :-1, :]
-    return torch.mean(torch.abs(pred_dx - gt_dx)) + torch.mean(torch.abs(pred_dy - gt_dy))
+    return torch.mean(torch.abs(pred_dx - gt_dx)) + torch.mean(
+        torch.abs(pred_dy - gt_dy)
+    )

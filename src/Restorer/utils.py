@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import time
+from timm.models.layers import DropPath
 
 
 class LayerNorm(nn.Module):
@@ -233,39 +234,41 @@ class ConditionedChannelAttentionCN(nn.Module):
         cat_channels = cat_channels.permute(0, 2, 3, 1)
         ca = self.mlp(cat_channels)
         return ca
-    
+
+
 class SimpleGateCN(nn.Module):
     def forward(self, x):
         x1, x2 = x.chunk(2, dim=3)
         return F.gelu(x1) * F.sigmoid(x2)
-    
-from timm.models.layers import trunc_normal_, DropPath
+
 
 class Block(nn.Module):
-    def __init__(self, dim, drop_path=0., cond_chans=0, expand_dim=4):
+    def __init__(self, dim, drop_path=0.0, cond_chans=0, expand_dim=4):
         super().__init__()
-        self.dwconv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim) # depthwise conv
+        self.dwconv = nn.Conv2d(
+            dim, dim, kernel_size=3, padding=1, groups=dim
+        )  # depthwise conv
         self.norm = LayerNorm(dim, eps=1e-6)
-        self.pwconv1 = nn.Linear(dim, expand_dim * dim) # pointwise conv
+        self.pwconv1 = nn.Linear(dim, expand_dim * dim)  # pointwise conv
 
         self.sg = SimpleGateCN()
-        self.sca = ConditionedChannelAttentionCN(expand_dim * dim , cond_chans)
+        self.sca = ConditionedChannelAttentionCN(expand_dim * dim, cond_chans)
         # self.grn = GRN(4 * dim)
-        self.pwconv2 = nn.Linear(expand_dim * dim , dim)
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+        self.pwconv2 = nn.Linear(expand_dim * dim, dim)
+        self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(self, inp):
         x, cond = inp
         input = x
         x = self.dwconv(x)
-        x = x.permute(0, 2, 3, 1) 
+        x = x.permute(0, 2, 3, 1)
         x = self.norm(x)
         x = self.pwconv1(x)
-        #x = self.sg(x)
+        # x = self.sg(x)
         x = F.gelu(x)
         x = x * self.sca(x, cond)
-        #x = self.grn(x)
+        # x = self.grn(x)
         x = self.pwconv2(x)
-        x = x.permute(0, 3, 1, 2) 
+        x = x.permute(0, 3, 1, 2)
         x = input + self.drop_path(x)
         return x, cond

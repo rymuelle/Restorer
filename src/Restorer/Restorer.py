@@ -291,7 +291,6 @@ class Restorer(nn.Module):
         middle_blk_num=1,
         enc_blk_nums=[],
         dec_blk_nums=[],
-        GCE_CONVS_nums=[],
         cond_input=1,
         cond_output=32,
         expand_dims=2,
@@ -334,13 +333,10 @@ class Restorer(nn.Module):
         # for num in enc_blk_nums:
         for i in range(len(enc_blk_nums)):
             num = enc_blk_nums[i]
-            GCE_Convs = GCE_CONVS_nums[i]
             self.encoders.append(
                 nn.Sequential(
                     *[
-                        Block(
-                            chan,  cond_chans=cond_output, expand_dim=self.expand_dims
-                        )
+                        Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims)
                         for _ in range(num)
                     ]
                 )
@@ -349,7 +345,10 @@ class Restorer(nn.Module):
             chan = chan * 2
 
         self.middle_blks = nn.Sequential(
-            *[Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims) for _ in range(middle_blk_num)]
+            *[
+                Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims)
+                for _ in range(middle_blk_num)
+            ]
         )
 
         for i in range(len(dec_blk_nums)):
@@ -362,7 +361,10 @@ class Restorer(nn.Module):
             chan = chan // 2
             self.decoders.append(
                 nn.Sequential(
-                    *[Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims) for _ in range(num)]
+                    *[
+                        Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims)
+                        for _ in range(num)
+                    ]
                 )
             )
 
