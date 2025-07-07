@@ -4,7 +4,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from Restorer.utils import SimpleGate, ConditionedChannelAttention, LayerNorm2d
+from Restorer.utils import SimpleGate, ConditionedChannelAttention, LayerNorm2d, Block
 
 
 class depthwise_separable_conv(nn.Module):
@@ -294,9 +294,11 @@ class Restorer(nn.Module):
         GCE_CONVS_nums=[],
         cond_input=1,
         cond_output=32,
+        expand_dims=2,
     ):
         super().__init__()
 
+        self.expand_dims = expand_dims
         # self.film_gen =  FiLMGenerator(1, (width, width*2**len(enc_blk_nums), width, out_channels))
         # self.film_block = FiLMBlock()
         self.conditioning_gen = nn.Sequential(
@@ -336,8 +338,8 @@ class Restorer(nn.Module):
             self.encoders.append(
                 nn.Sequential(
                     *[
-                        CascadedGazeBlock(
-                            chan, GCE_Conv=GCE_Convs, cond_chans=cond_output
+                        Block(
+                            chan, drop_path=0., cond_chans=cond_output, expand_dim=self.expand_dims
                         )
                         for _ in range(num)
                     ]
@@ -347,7 +349,7 @@ class Restorer(nn.Module):
             chan = chan * 2
 
         self.middle_blks = nn.Sequential(
-            *[NAFBlock0(chan, cond_chans=cond_output) for _ in range(middle_blk_num)]
+            *[Block(chan, drop_path=0., cond_chans=cond_output, expand_dim=self.expand_dims) for _ in range(middle_blk_num)]
         )
 
         for i in range(len(dec_blk_nums)):
@@ -360,7 +362,7 @@ class Restorer(nn.Module):
             chan = chan // 2
             self.decoders.append(
                 nn.Sequential(
-                    *[NAFBlock0(chan, cond_chans=cond_output) for _ in range(num)]
+                    *[Block(chan, drop_path=0., cond_chans=cond_output, expand_dim=self.expand_dims) for _ in range(num)]
                 )
             )
 

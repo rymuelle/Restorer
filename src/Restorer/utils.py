@@ -216,3 +216,57 @@ def measure_inference_speed(model, data, max_iter=200, log_interval=50):
             )
             break
     return fps
+
+
+class ConditionedChannelAttentionCN(nn.Module):
+    def __init__(self, dims, cat_dims):
+        super().__init__()
+        in_dim = dims + cat_dims
+        self.mlp = nn.Sequential(nn.Linear(in_dim, dims))
+        self.pool = nn.AdaptiveAvgPool2d(1)
+
+    def forward(self, x, conditioning):
+        x = x.permute(0, 3, 1, 2)
+        pool = self.pool(x)
+        conditioning = conditioning.unsqueeze(-1).unsqueeze(-1)
+        cat_channels = torch.cat([pool, conditioning], dim=1)
+        cat_channels = cat_channels.permute(0, 2, 3, 1)
+        ca = self.mlp(cat_channels)
+        return ca
+    
+class SimpleGateCN(nn.Module):
+    def forward(self, x):
+        x1, x2 = x.chunk(2, dim=3)
+        return x1 * x2
+    
+from timm.models.layers import trunc_normal_, DropPath
+
+class Block(nn.Module):
+    def __init__(self, dim, drop_path=0., cond_chans=0, expand_dim=3):
+        super().__init__()
+        self.dwconv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim) # depthwise conv
+        self.norm = LayerNorm(dim, eps=1e-6)
+        self.pwconv1 = nn.Linear(dim, expand_dim * dim) # pointwise conv
+
+        self.sg = SimpleGateCN()
+        self.sca = ConditionedChannelAttentionCN(expand_dim * dim // 2, cond_chans)
+        # self.grn = GRN(4 * dim)
+        self.pwconv2 = nn.Linear(expand_dim * dim // 2, dim)
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
+    def forward(self, inp):
+        x, cond = inp
+        input = x
+        x = self.dwconv(x)
+        x = x.permute(0, 2, 3, 1) 
+        x = self.norm(x)
+        x = self.pwconv1(x)
+        x = self.sg(x)
+        x = x * self.sca(x, cond)
+        #x = self.grn(x)
+        x = self.pwconv2(x)
+        x = x.permute(0, 3, 1, 2) 
+        x = input + self.drop_path(x)
+        return x, cond
+
+
