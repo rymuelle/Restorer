@@ -237,21 +237,21 @@ class ConditionedChannelAttentionCN(nn.Module):
 class SimpleGateCN(nn.Module):
     def forward(self, x):
         x1, x2 = x.chunk(2, dim=3)
-        return x1 * x2
+        return F.gelu(x1) * F.sigmoid(x2)
     
 from timm.models.layers import trunc_normal_, DropPath
 
 class Block(nn.Module):
-    def __init__(self, dim, drop_path=0., cond_chans=0, expand_dim=3):
+    def __init__(self, dim, drop_path=0., cond_chans=0, expand_dim=4):
         super().__init__()
         self.dwconv = nn.Conv2d(dim, dim, kernel_size=3, padding=1, groups=dim) # depthwise conv
         self.norm = LayerNorm(dim, eps=1e-6)
         self.pwconv1 = nn.Linear(dim, expand_dim * dim) # pointwise conv
 
         self.sg = SimpleGateCN()
-        self.sca = ConditionedChannelAttentionCN(expand_dim * dim // 2, cond_chans)
+        self.sca = ConditionedChannelAttentionCN(expand_dim * dim , cond_chans)
         # self.grn = GRN(4 * dim)
-        self.pwconv2 = nn.Linear(expand_dim * dim // 2, dim)
+        self.pwconv2 = nn.Linear(expand_dim * dim , dim)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
     def forward(self, inp):
@@ -261,7 +261,7 @@ class Block(nn.Module):
         x = x.permute(0, 2, 3, 1) 
         x = self.norm(x)
         x = self.pwconv1(x)
-        x = self.sg(x)
+        #x = self.sg(x)
         x = F.gelu(x)
         x = x * self.sca(x, cond)
         #x = self.grn(x)
