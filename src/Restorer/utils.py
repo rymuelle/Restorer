@@ -262,11 +262,10 @@ class Block(nn.Module):
         x = self.norm(x)
         x = self.pwconv1(x)
         x = self.sg(x)
+        x = F.gelu(x)
         x = x * self.sca(x, cond)
         #x = self.grn(x)
         x = self.pwconv2(x)
         x = x.permute(0, 3, 1, 2) 
         x = input + self.drop_path(x)
         return x, cond
-
-

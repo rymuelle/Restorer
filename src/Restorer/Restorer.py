@@ -339,7 +339,7 @@ class Restorer(nn.Module):
                 nn.Sequential(
                     *[
                         Block(
-                            chan, drop_path=0., cond_chans=cond_output, expand_dim=self.expand_dims
+                            chan,  cond_chans=cond_output, expand_dim=self.expand_dims
                         )
                         for _ in range(num)
                     ]
@@ -349,7 +349,7 @@ class Restorer(nn.Module):
             chan = chan * 2
 
         self.middle_blks = nn.Sequential(
-            *[Block(chan, drop_path=0., cond_chans=cond_output, expand_dim=self.expand_dims) for _ in range(middle_blk_num)]
+            *[Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims) for _ in range(middle_blk_num)]
         )
 
         for i in range(len(dec_blk_nums)):
@@ -362,7 +362,7 @@ class Restorer(nn.Module):
             chan = chan // 2
             self.decoders.append(
                 nn.Sequential(
-                    *[Block(chan, drop_path=0., cond_chans=cond_output, expand_dim=self.expand_dims) for _ in range(num)]
+                    *[Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims) for _ in range(num)]
                 )
             )
 
