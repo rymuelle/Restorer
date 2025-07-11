@@ -272,3 +272,28 @@ class Block(nn.Module):
         x = x.permute(0, 3, 1, 2)
         x = input + self.drop_path(x)
         return x, cond
+
+
+class BasicViTBlock(nn.Module):
+    def __init__(self, dim, heads=4, mlp_ratio=4.0):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(dim)
+        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads, batch_first=True)
+
+        self.norm2 = nn.LayerNorm(dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, int(dim * mlp_ratio)),
+            nn.GELU(),
+            nn.Linear(int(dim * mlp_ratio), dim)
+        )
+
+    def forward(self, x):
+        y = x
+        B, C, H, W = x.shape
+        x_flat = x.view(B, C, H * W).transpose(1, 2)  # (B, N, C)
+        x_norm = self.norm1(x_flat)
+        attn_out, _ = self.attn(x_norm, x_norm, x_norm)
+        x = x_flat + attn_out
+        x = x + self.mlp(self.norm2(x))  # Residual
+        x = x.transpose(1, 2).view(B, C, H, W)
+        return y + x

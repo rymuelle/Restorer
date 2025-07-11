@@ -4,7 +4,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from Restorer.utils import SimpleGate, ConditionedChannelAttention, LayerNorm2d, Block
+from Restorer.utils import SimpleGate, ConditionedChannelAttention, LayerNorm2d, Block, BasicViTBlock
 
 
 class depthwise_separable_conv(nn.Module):
@@ -343,6 +343,9 @@ class Restorer(nn.Module):
             )
             self.downs.append(nn.Conv2d(chan, 2 * chan, 2, 2))
             chan = chan * 2
+            
+        self.vit = BasicViTBlock(chan)
+        self.vit2 = BasicViTBlock(chan)
 
         self.middle_blks = nn.Sequential(
             *[
@@ -385,7 +388,9 @@ class Restorer(nn.Module):
             encs.append(x)
             x = down(x)
 
+        x =  self.vit(x)
         x = self.middle_blks((x, cond))[0]
+        x =  self.vit2(x)
 
         for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
             x = up(x)
