@@ -23,7 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 losses = [
     "torch_dct>=0.1.6",
-    "kornia>=0.8.1",
+    "kornia>=0.7.3",
     "lpips>=0.1.4",
     "pytorch_msssim>=1.0.0",
     ]
