@@ -11,7 +11,6 @@ def test_model_prediction_with_valid_data():
     enc_blks = [2, 2, 4, 6]
     middle_blk_num = 10
     dec_blks = [2, 2, 2, 2]
-    GCE_CONVS_nums = [3, 3, 2, 2]
 
     model = Restorer(
         in_channels=4,
@@ -20,7 +19,6 @@ def test_model_prediction_with_valid_data():
         middle_blk_num=middle_blk_num,
         enc_blk_nums=enc_blks,
         dec_blk_nums=dec_blks,
-        GCE_CONVS_nums=GCE_CONVS_nums,
         cond_input=1,
         cond_output=128,
     )

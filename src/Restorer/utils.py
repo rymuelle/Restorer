@@ -273,10 +273,16 @@ class Block(nn.Module):
         x = input + self.drop_path(x)
         return x, cond
 
+def interpolateHWC(x, size, mode='nearest'):
+    # x: (B, H, W, C)
+    x = x.permute(0, 3, 1, 2)  # -> (B, C, H, W)
+    x = F.interpolate(x, size=size, mode=mode)
+    x = x.permute(0, 2, 3, 1)  # -> (B, H, W, C)
+    return x
 
 
 class BasicViTBlock(nn.Module):
-    def __init__(self, dim, heads=4, mlp_ratio=4.0, max_dim=32):
+    def __init__(self, dim, heads=4, mlp_ratio=4.0):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
         self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads, batch_first=True)
@@ -287,28 +293,21 @@ class BasicViTBlock(nn.Module):
             nn.GELU(),
             nn.Linear(int(dim * mlp_ratio), dim)
         )
-        self.max_dim = max_dim
 
     def forward(self, x):
         y = x
         B, C, H, W = x.shape
-        Hp = min(H, self.max_dim)
-        Wp = min(W, self.max_dim)
-        if (H > self.max_dim) or (W > self.max_dim):
-            x = F.interpolate(x, size=(Hp, Wp))
-        x_flat = x.view(B, C, Hp * Wp).transpose(1, 2)  # (B, N, C)
+        x_flat = x.view(B, C, H * W).transpose(1, 2)  # (B, N, C)
         x_norm = self.norm1(x_flat)
         attn_out, _ = self.attn(x_norm, x_norm, x_norm)
         x = x_flat + attn_out
         x = x + self.mlp(self.norm2(x))  # Residual
-        x = x.transpose(1, 2).view(B, C, Hp, Wp)
-        if (H > self.max_dim) or (W > self.max_dim):
-            x = F.interpolate(x, size=(H, W))
+        x = x.transpose(1, 2).view(B, C, H, W)
         return y + x
     
 
 class ViTBlock(nn.Module):
-    def __init__(self, dim, drop_path=0.0, cond_chans=0, expand_dim=4, vit_max_size=32):
+    def __init__(self, dim, drop_path=0.0, cond_chans=0, expand_dim=4, vit_max_size=16):
         super().__init__()
         self.dwconv = nn.Conv2d(
             dim, dim, kernel_size=3, padding=1, groups=dim
