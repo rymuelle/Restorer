@@ -8,9 +8,12 @@ def test_model_prediction_with_valid_data():
     """
     print("\nRunning test_model_prediction_with_valid_data...")
     width = 60
-    enc_blks = [2, 2, 4, 6]
-    middle_blk_num = 10
-    dec_blks = [2, 2, 2, 2]
+    enc_blks = [1, 1, 1, 0]
+    vit_blks = [0, 0, 0, 1]
+    middle_blk_num = 1
+    dec_blks = [1, 1, 1, 1]
+    expand_dims = 2
+    cond_output = 32
 
     model = Restorer(
         in_channels=4,
@@ -18,9 +21,11 @@ def test_model_prediction_with_valid_data():
         width=width,
         middle_blk_num=middle_blk_num,
         enc_blk_nums=enc_blks,
+        vit_blk_nums=vit_blks,
         dec_blk_nums=dec_blks,
         cond_input=1,
-        cond_output=128,
+        expand_dims=expand_dims,
+        cond_output=cond_output,
     )
     B, C, H, W = 1, 4, 128, 128
     test_data = torch.rand(B, C, H, W)

@@ -273,7 +273,8 @@ class Block(nn.Module):
         x = input + self.drop_path(x)
         return x, cond
 
-def interpolateHWC(x, size, mode='nearest'):
+
+def interpolateHWC(x, size, mode="nearest"):
     # x: (B, H, W, C)
     x = x.permute(0, 3, 1, 2)  # -> (B, C, H, W)
     x = F.interpolate(x, size=size, mode=mode)
@@ -285,13 +286,15 @@ class BasicViTBlock(nn.Module):
     def __init__(self, dim, heads=4, mlp_ratio=4.0):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
-        self.attn = nn.MultiheadAttention(embed_dim=dim, num_heads=heads, batch_first=True)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=dim, num_heads=heads, batch_first=True
+        )
 
         self.norm2 = nn.LayerNorm(dim)
         self.mlp = nn.Sequential(
             nn.Linear(dim, int(dim * mlp_ratio)),
             nn.GELU(),
-            nn.Linear(int(dim * mlp_ratio), dim)
+            nn.Linear(int(dim * mlp_ratio), dim),
         )
 
     def forward(self, x):
@@ -304,37 +307,39 @@ class BasicViTBlock(nn.Module):
         x = x + self.mlp(self.norm2(x))  # Residual
         x = x.transpose(1, 2).view(B, C, H, W)
         return y + x
-    
+
 
 class ViTBlock(nn.Module):
-    def __init__(self, dim, drop_path=0.0, cond_chans=0, expand_dim=4, vit_max_size=16):
+    def __init__(self, dim, drop_path=0.0, cond_chans=0, expand_dim=4):
         super().__init__()
         self.dwconv = nn.Conv2d(
             dim, dim, kernel_size=3, padding=1, groups=dim
         )  # depthwise conv
-        
+
         self.norm = LayerNorm(dim, eps=1e-6)
         self.pwconv1 = nn.Linear(dim, expand_dim * dim)  # pointwise conv
 
         self.sg = SimpleGateCN()
-        self.vit = BasicViTBlock(expand_dim * dim, max_dim=vit_max_size)
+        self.vit = BasicViTBlock(expand_dim * dim)
         self.sca = ConditionedChannelAttentionCN(expand_dim * dim, cond_chans)
         # self.grn = GRN(4 * dim)
         self.pwconv2 = nn.Linear(expand_dim * dim, dim)
-       
+
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
     def forward(self, inp):
         x, cond = inp
         input = x
         x = self.dwconv(x)
-        
+
         x = x.permute(0, 2, 3, 1)
         x = self.norm(x)
         x = self.pwconv1(x)
         # x = self.sg(x)
         x = F.gelu(x)
+        x = x.permute(0, 3, 1, 2)
         x = self.vit(x)
+        x = x.permute(0, 2, 3, 1)
         x = x * self.sca(x, cond)
         # x = self.grn(x)
         x = self.pwconv2(x)

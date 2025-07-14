@@ -4,7 +4,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from Restorer.utils import SimpleGate, ConditionedChannelAttention, LayerNorm2d, Block, BasicViTBlock
+from Restorer.utils import (
+    SimpleGate,
+    ConditionedChannelAttention,
+    LayerNorm2d,
+    Block,
+    ViTBlock,
+)
 
 
 class depthwise_separable_conv(nn.Module):
@@ -290,6 +296,7 @@ class Restorer(nn.Module):
         width=16,
         middle_blk_num=1,
         enc_blk_nums=[],
+        vit_blk_nums=[],
         dec_blk_nums=[],
         cond_input=1,
         cond_output=32,
@@ -333,19 +340,23 @@ class Restorer(nn.Module):
         # for num in enc_blk_nums:
         for i in range(len(enc_blk_nums)):
             num = enc_blk_nums[i]
+            vit_num = vit_blk_nums[i]
             self.encoders.append(
                 nn.Sequential(
                     *[
                         Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims)
                         for _ in range(num)
-                    ]
+                    ],
+                    *[
+                        ViTBlock(
+                            chan, cond_chans=cond_output, expand_dim=self.expand_dims
+                        )
+                        for _ in range(vit_num)
+                    ],
                 )
             )
             self.downs.append(nn.Conv2d(chan, 2 * chan, 2, 2))
             chan = chan * 2
-            
-        self.vit = BasicViTBlock(chan)
-        self.vit2 = BasicViTBlock(chan)
 
         self.middle_blks = nn.Sequential(
             *[
@@ -388,9 +399,7 @@ class Restorer(nn.Module):
             encs.append(x)
             x = down(x)
 
-        x =  self.vit(x)
         x = self.middle_blks((x, cond))[0]
-        x =  self.vit2(x)
 
         for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
             x = up(x)
@@ -426,3 +435,15 @@ class AddPixelShuffleWithPassThrough(nn.Module):
         x = self.ps(x)
         res = self.upscale(inp)
         return x + res
+
+
+class AddPixelShuffle(nn.Module):
+    def __init__(self, model, in_channels=4, out_channels=3):
+        super().__init__()
+        self.model = model
+        self.ps = nn.PixelShuffle(2)
+
+    def forward(self, x, iso):
+        x = self.model(x, iso)
+        x = self.ps(x)
+        return x
