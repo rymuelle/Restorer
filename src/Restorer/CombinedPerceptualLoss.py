@@ -12,6 +12,7 @@ import torch_dct as dct_2d
 import lpips
 
 
+
 class CombinedPerceptualLoss(nn.Module):
     def __init__(
         self,
@@ -19,6 +20,7 @@ class CombinedPerceptualLoss(nn.Module):
         lambda_invariant_l1=0,
         lambda_ssim=0.0,
         lambda_vgg=0.0,
+
         lambda_frequency=0.0,
         lambda_chroma=0.0,
         lambda_luma=0.0,
@@ -143,35 +145,116 @@ class VGGPerceptualLoss(nn.Module):
     Runs prediction and target through VGG and compares the output of each layer to compute a perceptual loss.
     """
 
-    def __init__(self, layers=[3, 8, 15, 22], weight=1.0):
+    def __init__(self, layers=[3, 8, 15, 22], weights=[1.0, 1.0, 1.0, 1.0]):
         super().__init__()
         vgg = models.vgg16(weights=True).features[: max(layers) + 1]
         for param in vgg.parameters():
             param.requires_grad = False
         self.vgg = vgg.eval()
         self.layers = layers
-        self.weight = weight
+        self.weights = weights
         self.criterion = nn.L1Loss()
 
     def forward(self, pred, target):
         loss = 0.0
         x = pred
         y = target
-        for i, layer in enumerate(self.vgg):
+        wdix = 0
+        for idx, layer in enumerate(self.vgg):
             x = layer(x)
             y = layer(y)
-            if i in self.layers:
-                loss += self.criterion(x, y)
-        return loss * self.weight
+            if idx in self.layers:
+                loss += self.criterion(x, y) * self.weights[wdix]
+                wdix += 1
+        return loss 
 
 
-def rgb_to_ycbcr(img):
-    r, g, b = img[:, 0:1], img[:, 1:2], img[:, 2:3]
-    y = 0.299 * r + 0.587 * g + 0.114 * b
-    cb = -0.169 * r - 0.331 * g + 0.5 * b + 0.5
-    cr = 0.5 * r - 0.419 * g - 0.081 * b + 0.5
-    return torch.cat([y, cb, cr], dim=1)
 
+def gram_matrix(features):
+    """Compute the Gram matrix from feature maps."""
+    B, C, H, W = features.size()
+    features = features.view(B, C, H * W)  # Flatten spatial dimensions
+    gram = torch.bmm(features, features.transpose(1, 2))  # Batch matrix multiplication
+    gram = gram / (C * H * W)  # Normalize
+    return gram
+
+class StyleLoss(nn.Module):
+    def __init__(self, target_features):
+        """
+        target_features: List of feature maps from the style image at chosen layers.
+        """
+        super().__init__()
+        self.target_grams = [gram_matrix(f).detach() for f in target_features]
+
+    def forward(self, input_features):
+        """
+        input_features: List of feature maps from the generated image at the same layers.
+        """
+        loss = 0
+        for inp_feat, target_gram in zip(input_features, self.target_grams):
+            G = gram_matrix(inp_feat)
+            loss += nn.functional.mse_loss(G, target_gram)
+        return loss
+
+class VGGStyleFeatureExtractor(nn.Module):
+    def __init__(self, layers=None):
+        """
+        Extracts features from specific VGG19 layers for style loss.
+        Default layers match those used in Gatys et al.'s style transfer.
+        """
+        super().__init__()
+        if layers is None:
+            # Default layers: conv1_1, conv2_1, conv3_1, conv4_1, conv5_1
+            layers = {'0': 'conv1_1', '5': 'conv2_1', '10': 'conv3_1',
+                      '19': 'conv4_1', '28': 'conv5_1'}
+
+        self.vgg = models.vgg19(pretrained=True).features.eval()
+        for param in self.vgg.parameters():
+            param.requires_grad = False
+
+        self.selected_layers = layers
+
+    def forward(self, x):
+        features = []
+        for name, layer in self.vgg._modules.items():
+            x = layer(x)
+            if name in self.selected_layers:
+                features.append(x)
+        return features
+    
+    
+# def rgb_to_ycbcr(img):
+#     r, g, b = img[:, 0:1], img[:, 1:2], img[:, 2:3]
+#     y = 0.299 * r + 0.587 * g + 0.114 * b
+#     cb = -0.169 * r - 0.331 * g + 0.5 * b + 0.5
+#     cr = 0.5 * r - 0.419 * g - 0.081 * b + 0.5
+#     return torch.cat([y, cb, cr], dim=1)
+
+
+# def ycbcr_to_rgb(img):
+#     y, cb, cr = img[:, 0:1], img[:, 1:2] - 0.5, img[:, 2:3] - 0.5
+
+#     r = y + 1.402 * cr
+#     g = y - 0.344136 * cb - 0.714136 * cr
+#     b = y + 1.772 * cb
+
+#     return torch.cat([r, g, b], dim=1)
+
+# def rgb_to_ycbcr_jpeg(img):
+#     r, g, b = img[:, 0:1], img[:, 1:2], img[:, 2:3]
+#     y  = 0.299 * r + 0.587 * g + 0.114 * b
+#     cb = (b - y) * 0.564 + 0.5
+#     cr = (r - y) * 0.713 + 0.5
+#     return torch.cat([y, cb, cr], dim=1)
+
+# def ycbcr_to_rgb_jpeg(img):
+#     y, cb, cr = img[:, 0:1], img[:, 1:2] - 0.5, img[:, 2:3] - 0.5
+#     r = y + 1.403 * cr
+#     g = y - 0.344 * cb - 0.714 * cr
+#     b = y + 1.770 * cb
+#     return torch.cat([r, g, b], dim=1)
+
+from kornia.color import rgb_to_ycbcr, ycbcr_to_rgb
 
 class ChromaLoss(torch.nn.Module):
     def __init__(self, loss_func=F.l1_loss):
