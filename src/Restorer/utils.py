@@ -346,3 +346,16 @@ class ViTBlock(nn.Module):
         x = x.permute(0, 3, 1, 2)
         x = input + self.drop_path(x)
         return x, cond
+
+
+def numpy_pixel_shuffle(array, r=2):
+    H, W, C = array.shape
+    assert C // r ** 2 == C / r ** 2, f"C must be a multiple of {r ** 2}." 
+    shuffle = array.reshape(H, W, C, r, r).transpose(0, 3, 1, 4, 2).reshape(H * r, W * r, C)
+    return shuffle
+
+def numpy_pixel_unshuffle(array, r=2):
+    H, W, C = array.shape
+    assert H // r == H / r and W // r == W / r, f"Dims must be divisible by {r}."
+    unshuffle = array.reshape(H // r, r, W // r, r, C).transpose(0, 2, 4, 1, 3).reshape(H // r, W // r, C * r ** 2)
+    return unshuffle
