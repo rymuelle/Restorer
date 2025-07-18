@@ -301,6 +301,7 @@ class Restorer(nn.Module):
         cond_input=1,
         cond_output=32,
         expand_dims=2,
+        drop_path=0.0
     ):
         super().__init__()
 
@@ -344,12 +345,12 @@ class Restorer(nn.Module):
             self.encoders.append(
                 nn.Sequential(
                     *[
-                        Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims)
+                        Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims, drop_path=drop_path)
                         for _ in range(num)
                     ],
                     *[
                         ViTBlock(
-                            chan, cond_chans=cond_output, expand_dim=self.expand_dims
+                            chan, cond_chans=cond_output, expand_dim=self.expand_dims, drop_path=drop_path
                         )
                         for _ in range(vit_num)
                     ],
@@ -360,7 +361,7 @@ class Restorer(nn.Module):
 
         self.middle_blks = nn.Sequential(
             *[
-                Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims)
+                Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims, drop_path=drop_path)
                 for _ in range(middle_blk_num)
             ]
         )
@@ -376,7 +377,7 @@ class Restorer(nn.Module):
             self.decoders.append(
                 nn.Sequential(
                     *[
-                        Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims)
+                        Block(chan, cond_chans=cond_output, expand_dim=self.expand_dims, drop_path=drop_path)
                         for _ in range(num)
                     ]
                 )
