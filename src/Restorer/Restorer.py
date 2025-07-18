@@ -301,7 +301,8 @@ class Restorer(nn.Module):
         cond_input=1,
         cond_output=32,
         expand_dims=2,
-        drop_path=0.0
+        drop_path=0.0,
+        drop_path_increment=0.0,
     ):
         super().__init__()
 
@@ -356,6 +357,7 @@ class Restorer(nn.Module):
                     ],
                 )
             )
+            drop_path += drop_path_increment 
             self.downs.append(nn.Conv2d(chan, 2 * chan, 2, 2))
             chan = chan * 2
 
@@ -373,6 +375,7 @@ class Restorer(nn.Module):
                     nn.Conv2d(chan, chan * 2, 1, bias=False), nn.PixelShuffle(2)
                 )
             )
+            drop_path -= drop_path_increment 
             chan = chan // 2
             self.decoders.append(
                 nn.Sequential(
@@ -382,6 +385,7 @@ class Restorer(nn.Module):
                     ]
                 )
             )
+
 
         self.padder_size = 2 ** len(self.encoders)
 
