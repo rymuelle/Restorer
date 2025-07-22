@@ -303,6 +303,7 @@ class Restorer(nn.Module):
         expand_dims=2,
         drop_path=0.0,
         drop_path_increment=0.0,
+        dropout_rate=0.3
     ):
         super().__init__()
 
@@ -310,7 +311,7 @@ class Restorer(nn.Module):
         # self.film_gen =  FiLMGenerator(1, (width, width*2**len(enc_blk_nums), width, out_channels))
         # self.film_block = FiLMBlock()
         self.conditioning_gen = nn.Sequential(
-            nn.Linear(cond_input, 64), nn.ReLU(), nn.Linear(64, cond_output)
+            nn.Linear(cond_input, 64), nn.ReLU(), nn.Dropout(dropout_rate), nn.Linear(64, cond_output),
         )
 
         self.intro = nn.Conv2d(
