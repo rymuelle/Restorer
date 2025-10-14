@@ -73,7 +73,7 @@ class SmallRawDataset(Dataset):
         gt_image = gt_image * demosaiced_noisy.mean() / gt_image.mean()
 
         sparse, _ = cfa_to_sparse(bayer_data)
-        rggb = bayer_data.reshape(h // 2, 2, w // 2, 2, 1).transpose(3, 1, 4, 0, 2).reshape(4, h // 2, w // 2)
+        rggb =bayer_data.reshape(h // 2, 2, w // 2, 2, 1).transpose(1, 3, 4, 0, 2).reshape(4, h // 2, w // 2)
 
         # Convert to tensors
         output = {
