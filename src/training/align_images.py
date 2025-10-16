@@ -107,7 +107,7 @@ def align_clean_to_noisy(clean_img, noisy_img, refine=True, verbose=False):
     # flatten warp matrix for CSV
     for i in range(2):
         for j in range(3):
-            metrics[f"M{i}{j}"] = float(M_total[i, j])
+            metrics[f"m{i}{j}"] = float(M_total[i, j])
 
     return aligned, M_total, metrics
 
@@ -116,12 +116,12 @@ def align_clean_to_noisy(clean_img, noisy_img, refine=True, verbose=False):
 def apply_alignment(img, warp_params, interpolation=cv2.INTER_LINEAR):
     """
     Applies a previously estimated affine warp to an image.
-    warp_params: dict with keys M00..M12 or a 2x3 numpy array.
+    warp_params: dict with keys m00..m12 or a 2x3 numpy array.
     """
     if isinstance(warp_params, dict):
         M = np.array([
-            [warp_params["M00"], warp_params["M01"], warp_params["M02"]],
-            [warp_params["M10"], warp_params["M11"], warp_params["M12"]],
+            [warp_params["m00"], warp_params["m01"], warp_params["m02"]],
+            [warp_params["m10"], warp_params["m11"], warp_params["m12"]],
         ], dtype=np.float32)
     else:
         M = np.array(warp_params, dtype=np.float32)
@@ -176,6 +176,6 @@ class AlignImages(Dataset):
         aligned, matrix, metrics = align_clean_to_noisy(gt_image, demosaiced_noisy, refine=False)
         metrics['iso'] = row.iso
         metrics['std'] = (demosaiced_noisy.astype(int) - aligned.astype(int)).std()
-        metrics['bayer_path'] = bayer_path
-        metrics['gt_path'] = gt_path
+        metrics['noisy_image'] = bayer_path
+        metrics['gt_image'] = gt_path
         return gt_image, demosaiced_noisy, aligned, metrics

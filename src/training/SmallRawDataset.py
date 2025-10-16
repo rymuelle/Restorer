@@ -32,10 +32,10 @@ class SmallRawDataset(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         # Load images
-        with imageio.imopen(f"{row.bayer_path}", "r") as image_resource:
+        with imageio.imopen(self.path / f"{row.noisy_image}_bayer.jpg", "r") as image_resource:
             bayer_data = image_resource.read()
 
-        with imageio.imopen(f"{row.gt_path}", "r") as image_resource:
+        with imageio.imopen(self.path / f"{row.gt_image}.jpg", "r") as image_resource:
             gt_image = image_resource.read()
         gt_image  = gt_image/255
         bayer_data = bayer_data/255

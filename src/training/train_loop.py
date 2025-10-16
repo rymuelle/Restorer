@@ -4,6 +4,7 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 from src.training.utils import apply_gamma_torch
+import mlflow
 
 def make_conditioning(conditioning, device):
     B = conditioning.shape[0]
@@ -12,29 +13,24 @@ def make_conditioning(conditioning, device):
     return conditioning_extended
 
 
-def train_one_epoch(epoch, _model, _optimizer, _outname, _loader, _device, _loss_func, _clipping, log_interval = 10, sleep=0.2, rggb=False):
+def train_one_epoch(epoch, _model, _optimizer, _loader, _device, _loss_func, _clipping, 
+                    log_interval = 10, sleep=0.0, rggb=False,
+                    max_batches=0):
     _model.train()
-    total_loss, n_images, total_final_image_loss = 0.0, 0, 0.0
+    total_loss, n_images, total_l1_loss = 0.0, 0, 0.0
     start = perf_counter()
     pbar = tqdm(enumerate(_loader), total=len(_loader), desc=f"Train Epoch {epoch}")
 
-    # scaler = torch.amp.GradScaler(device_type="mps")  # create once, outside training loop
-
     for batch_idx, (output) in pbar:
-    # for output in train_loader:
         noisy = output['noisy'].float().to(_device)
         conditioning = output['conditioning'].float().to(_device)
         gt = output['aligned'].float().to(_device)
         input = output['sparse'].float().to(_device)
         if rggb:
             input = output['rggb'].float().to(_device)
-
         conditioning = make_conditioning(conditioning, _device)
-        # with torch.autocast(device_type="mps", dtype=torch.bfloat16):
-
 
         _optimizer.zero_grad(set_to_none=True)
-        # with torch.autocast(device_type="mps", dtype=torch.float16):
         pred = _model(input, conditioning, noisy) 
 
         loss = _loss_func(pred, gt)
@@ -48,22 +44,25 @@ def train_one_epoch(epoch, _model, _optimizer, _outname, _loader, _device, _loss
 
         # Testing final image quality
         final_image_loss = float(nn.functional.l1_loss(pred, gt).detach().cpu())
-        total_final_image_loss += final_image_loss
+        total_l1_loss += final_image_loss
         del loss, pred, final_image_loss
         torch.mps.empty_cache() 
 
         if (batch_idx + 1) % log_interval == 0:
                 pbar.set_postfix({"loss": f"{total_loss/n_images:.4f}"})
 
+        if (max_batches > 0) and (batch_idx+1 > max_batches): break
         time.sleep(sleep)
 
-    torch.save(_model.state_dict(), _outname)
-
+    train_time = perf_counter()-start
     print(f"[Epoch {epoch}] "
                 f"Train loss: {total_loss/n_images:.6f} "
-                f"Final image val loss: {total_final_image_loss/n_images:.6f} "
-                f"Time: {perf_counter()-start:.1f}s "
+                f"L1 loss: {total_l1_loss/n_images:.6f} "
+                f"Time: {train_time:.1f}s "
                 f"Images: {n_images}")
+    mlflow.log_metric("train_loss", total_loss/n_images, step=epoch)
+    mlflow.log_metric("l1_loss", total_l1_loss/n_images, step=epoch)
+    mlflow.log_metric("epoch_duration_s", train_time, step=epoch)
 
     return total_loss / max(1, n_images), perf_counter()-start
 
@@ -76,9 +75,7 @@ def visualize(idxs, _model, dataset, _device, _loss_func, rggb=False):
     total_loss, n_images, total_final_image_loss = 0.0, 0, 0.0
     start = perf_counter()
 
-
     for idx in idxs:
-    # for output in train_loader:
         row = dataset[idx]
         noisy = row['noisy'].unsqueeze(0).float().to(_device)
         conditioning = row['conditioning'].float().unsqueeze(0).to(_device)

@@ -361,42 +361,11 @@ class Restorer(nn.Module):
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h))
         return x
     
-
 class ModelWrapper(nn.Module):
-    def __init__(self):
+    def __init__(self, **kwargs):
         super().__init__()
         self.model = Restorer(
-            chans = [32, 128, 256, 512, 1024],
-            enc_blk_nums = [1,1,3,4],
-            middle_blk_num = 6,
-            dec_blk_nums = [2, 2, 1, 1],
-            cond_input = 1,
-            in_channels = 3,
-            out_channels = 3, 
-        )
-
-    def forward(self, x, cond, residual):
-        output = self.model(x, cond)
-        return residual + output
-    
-def make_model(model_name = '/Volumes/EasyStore/models/Cond_NAF_variable_layers_cca_merge_unet_sparse_ssim_real_raw.pt'):
-    model = ModelWrapper()
-    if not model_name is None:
-        state_dict = torch.load(model_name, map_location="cpu")
-        model.load_state_dict(state_dict)
-    return model
-
-class ModelWrapperFull(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.model = Restorer(
-            chans = [64, 128, 256, 512, 1024],
-            enc_blk_nums = [1,1,3,4],
-            middle_blk_num = 6,
-            dec_blk_nums = [2, 2, 1, 1],
-            cond_input = 1,
-            in_channels = 3,
-            out_channels = 3, 
+            **kwargs
         )
 
     def forward(self, x, cond, residual):
@@ -404,89 +373,8 @@ class ModelWrapperFull(nn.Module):
         return residual + output
     
 
-def make_full_model(model_name = '/Volumes/EasyStore/models/Cond_NAF_variable_layers_cca_merge_unet_sparse_ssim_real_raw_full.pt'):
-    model = ModelWrapperFull()
-    if not model_name is None:
-        state_dict = torch.load(model_name, map_location="cpu")
-        model.load_state_dict(state_dict)
-    return model
-
-
-class ModelWrapperFullRGGB(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.model = Restorer(
-            chans = [32, 64, 128, 256, 256, 256],
-            enc_blk_nums = [2,2,2,3,4],
-            middle_blk_num = 12,
-            dec_blk_nums = [2, 2, 2, 2, 2],
-            cond_input = 1,
-            in_channels = 4,
-            out_channels = 3, 
-            rggb=True,
-        )
-
-    def forward(self, x, cond, residual):
-        output = self.model(x, cond)
-        return residual + output
-    
-
-def make_full_model_RGGB(model_name = '/Volumes/EasyStore/models/Cond_NAF_variable_layers_cca_merge_unet_sparse_ssim_real_raw_full_RGGB.pt'):
-    model = ModelWrapperFullRGGB()
-    if not model_name is None:
-        state_dict = torch.load(model_name, map_location="cpu")
-        model.load_state_dict(state_dict)
-    return model
-
-
-class ModelWrapperResidual(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.model = Restorer(
-            chans = [32, 64, 128, 256, 256, 256],
-            enc_blk_nums = [2,2,2,3,4],
-            middle_blk_num = 12,
-            dec_blk_nums = [2, 2, 2, 2, 2],
-            cond_input = 1,
-            in_channels = 6,
-            out_channels = 3, 
-            rggb=False,
-        )
-
-    def forward(self, x, cond, residual):
-        output = self.model(x, cond)
-        return residual + output
-
-def make_residual_model(model_name = None):
-    model = ModelWrapperResidual()
-    if not model_name is None:
-        state_dict = torch.load(model_name, map_location="cpu")
-        model.load_state_dict(state_dict)
-    return model
-
-
-
-
-class ModelWrapperDeep(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.model = Restorer(
-            chans = [32, 64, 128, 256, 512, 1024],
-            enc_blk_nums = [2,2,2,3,4],
-            middle_blk_num = 6,
-            dec_blk_nums = [2, 2, 2, 2, 2],
-            cond_input = 1,
-            in_channels = 3,
-            out_channels = 3, 
-        )
-
-    def forward(self, x, cond, residual):
-        output = self.model(x, cond)
-        return residual + output
-    
-
-def make_deep_model(model_name = '/Volumes/EasyStore/models/Cond_NAF_variable_layers_cca_merge_unet_sparse_ssim_real_raw_deep.pt'):
-    model = ModelWrapperDeep()
+def make_full_model_RGGB(params, model_name=None):
+    model = ModelWrapper(**params)
     if not model_name is None:
         state_dict = torch.load(model_name, map_location="cpu")
         model.load_state_dict(state_dict)
