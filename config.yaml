@@ -1,0 +1,6 @@
+# config.yaml
+base_data_dir: /Volumes/EasyStore/RAWNIND/
+jpeg_output_subdir: /Users/ryanmueller/Pictures/JPEGs_high_quality
+cropped_jpeg_subdir: /Users/ryanmueller/Pictures/Cropped_JPEG_high_quality
+align_csv: align_data_high_quality.csv
+secondary_align_csv: secondary_align.csv
