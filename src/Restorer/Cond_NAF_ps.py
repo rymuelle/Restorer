@@ -5,32 +5,20 @@ import torch.nn as nn
 class LayerNorm2d(nn.Module):
     def __init__(self, channels, eps=1e-6):
         super(LayerNorm2d, self).__init__()
-        # 1. Keep the weight and bias as standard nn.Parameters
         self.register_parameter("weight", nn.Parameter(torch.ones(channels)))
         self.register_parameter("bias", nn.Parameter(torch.zeros(channels)))
         self.eps = eps
         
-        # 2. REMOVE the self.weight_view and self.bias_view initializations from here
-        # They will be created dynamically in forward.
-
     def forward(self, x):
-        # N, C, H, W = x.size() # While useful for clarity, not strictly needed for the operations
-
-        # 1. Calculate Mean (mu) and Variance (var) across the Channel dimension (1)
-        # Note: We are sticking to your original normalization over C (dim=1)
         mu = x.mean(1, keepdim=True)
         var = (x - mu).pow(2).mean(1, keepdim=True)
         
-        # 2. Normalize the input
         y = (x - mu) / torch.sqrt(var + self.eps)
         
-        # 3. Create the views INSIDE the forward pass, so they are part of the traced graph
         weight_view = self.weight.view(1, self.weight.size(0), 1, 1)
         bias_view = self.bias.view(1, self.bias.size(0), 1, 1)
         
-        # 4. Apply the learnable scale (weight) and shift (bias)
         y = weight_view * y + bias_view
-        
         return y
     
 class SimpleGate(nn.Module):
