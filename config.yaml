@@ -1,11 +1,12 @@
 # config.yaml
 # --- Paths ---
 base_data_dir: /Volumes/EasyStore/RAWNIND/
-jpeg_output_subdir: /Users/ryanmueller/Pictures/JPEGs_high_quality
-cropped_jpeg_subdir: /Users/ryanmueller/Pictures/Cropped_JPEG_high_quality
-align_csv: align_data_high_quality.csv
-secondary_align_csv: secondary_align.csv
-script_path: 'traces_and_weights'
+jpeg_output_subdir: /Volumes/EasyStore/RAWNIND/JPEGs/Cropped_JPEG
+cropped_jpeg_subdir: /Volumes/EasyStore/RAWNIND/JPEGs/Cropped_JPEG
+align_csv: align_data.csv
+secondary_align_csv: align_phase_v2.csv
+script_path: traces_and_weights
+mlflow_path: /Volumes/EasyStore/models/mlfow
 
 # --- Training Params ---
 colorspace: lin_rec2020
@@ -14,7 +15,7 @@ batch_size: 2
 crop_size: 256
 lr_base: 2.5e-5 
 clipping: 1e-2
-num_epochs_pretraining: 75
+num_epochs_pretraining: 50
 num_epochs_finetuning: 20
 val_split: 0.2
 random_seed: 42
@@ -24,8 +25,8 @@ experiment: NAF_test
 mlflow_experiment: NAFNet_variations
 
 # --- Run Configuration ---:
-run_name: NAF_deep
-run_path: NAF_deep
+run_name: NAF_deep_test_align
+run_path: NAF_deep_test_align
 model_params:
   chans: [32, 64, 128, 256, 256, 256]
   enc_blk_nums: [2, 2, 2, 3, 4]
