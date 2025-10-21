@@ -15,6 +15,7 @@ from colour_demosaicing import (
 import numpy as np
 import torch 
 import cv2
+from pathlib import Path
 
 
 
@@ -136,9 +137,6 @@ def apply_alignment(img, warp_params, interpolation=cv2.INTER_LINEAR):
     )
     return aligned
 
-
-
-
 class AlignImages(Dataset):
     def __init__(self, path, csv, crop_size=180, buffer=10, validation=False):
         super().__init__()
@@ -176,6 +174,6 @@ class AlignImages(Dataset):
         aligned, matrix, metrics = align_clean_to_noisy(gt_image, demosaiced_noisy, refine=False)
         metrics['iso'] = row.iso
         metrics['std'] = (demosaiced_noisy.astype(int) - aligned.astype(int)).std()
-        metrics['noisy_image'] = bayer_path
-        metrics['gt_image'] = gt_path
+        metrics['bayer_path'] = Path(bayer_path).name
+        metrics['gt_path'] = Path(gt_path).name
         return gt_image, demosaiced_noisy, aligned, metrics
