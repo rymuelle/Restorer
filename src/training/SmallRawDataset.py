@@ -12,12 +12,11 @@ from colour_demosaicing import (
 from src.training.utils import inverse_gamma_tone_curve, cfa_to_sparse
 import numpy as np
 import torch 
-import cv2
-from src.training.align_images import apply_alignment
-
+from src.training.align_images import apply_alignment, align_clean_to_noisy
+from pathlib import Path
 
 class SmallRawDataset(Dataset):
-    def __init__(self, path, csv, crop_size=180, buffer=10, validation=False):
+    def __init__(self, path, csv, crop_size=180, buffer=10, validation=False, run_align=False):
         super().__init__()
         self.df = pd.read_csv(csv)
         self.path = path
@@ -25,23 +24,29 @@ class SmallRawDataset(Dataset):
         self.buffer = buffer
         self.coordinate_iso = 6400
         self.validation=validation
-
+        self.run_align = run_align
     def __len__(self):
         return len(self.df)
     
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         # Load images
-        with imageio.imopen(self.path / f"{row.noisy_image}_bayer.jpg", "r") as image_resource:
+        with imageio.imopen(self.path / Path(f"{row.bayer_path}").name, "r") as image_resource:
             bayer_data = image_resource.read()
 
-        with imageio.imopen(self.path / f"{row.gt_image}.jpg", "r") as image_resource:
+        with imageio.imopen(self.path / Path(f"{row.gt_path}").name, "r") as image_resource:
             gt_image = image_resource.read()
         gt_image  = gt_image/255
         bayer_data = bayer_data/255
-
-        aligned = apply_alignment(gt_image, row.to_dict())
         demosaiced_noisy = demosaicing_CFA_Bayer_Malvar2004(bayer_data)
+
+        if self.run_align:
+            gt_image = (gt_image * 255).astype(np.uint8)
+            demosaiced_noisy = (demosaiced_noisy * 255).astype(np.uint8)
+            aligned, _, _ = align_clean_to_noisy(gt_image, demosaiced_noisy, refine=False, verbose=False)
+            aligned = aligned / 255
+        else:
+            aligned = apply_alignment(gt_image, row.to_dict())
 
         h, w, _ = gt_image.shape
         
