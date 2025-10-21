@@ -130,4 +130,4 @@ def visualize(idxs, _model, dataset, _device, _loss_func, rggb=False):
                 f"Time: {perf_counter()-start:.1f}s "
                 f"Images: {n_images}")
 
-    return total_loss / max(1, n_images), perf_counter()-start
+    return total_loss / max(1, n_images), total_final_image_loss / max(1, n_images), perf_counter()-start
