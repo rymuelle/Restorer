@@ -3,6 +3,8 @@
 base_data_dir: /Volumes/EasyStore/RAWNIND/
 jpeg_output_subdir: /Volumes/EasyStore/RAWNIND/JPEGs/Cropped_JPEG
 cropped_jpeg_subdir: /Volumes/EasyStore/RAWNIND/JPEGs/Cropped_JPEG
+cropped_raw_subdir: /Volumes/EasyStore/RAWNIND/Cropped_Raw
+cropped_raw_size: 2000
 align_csv: align_data.csv
 secondary_align_csv: align_phase_v2.csv
 script_path: traces_and_weights
@@ -25,8 +27,8 @@ experiment: NAF_test
 mlflow_experiment: NAFNet_variations
 
 # --- Run Configuration ---:
-run_name: NAF_deep_test_align
-run_path: NAF_deep_test_align
+run_name: NAF_deep_test_align_raw
+run_path: NAF_deep_test_align_raw
 model_params:
   chans: [32, 64, 128, 256, 256, 256]
   enc_blk_nums: [2, 2, 2, 3, 4]
