@@ -27,10 +27,10 @@ experiment: NAF_test
 mlflow_experiment: NAFNet_variations
 
 # --- Run Configuration ---:
-run_name: NAF_deep_test_align_raw
-run_path: NAF_deep_test_align_raw
+run_name: NAF_deep_wide_2nd
+run_path: NAF_deep_wide_2nd
 model_params:
-  chans: [32, 64, 128, 256, 256, 256]
+  chans: [32, 128, 256, 256, 256, 256]
   enc_blk_nums: [2, 2, 2, 3, 4]
   middle_blk_num: 12
   dec_blk_nums: [2, 2, 2, 2, 2]
