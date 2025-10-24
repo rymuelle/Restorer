@@ -27,10 +27,10 @@ experiment: NAF_test
 mlflow_experiment: NAFNet_variations
 
 # --- Run Configuration ---:
-run_name: NAF_deep_wide_2nd
-run_path: NAF_deep_wide_2nd
+run_name: NAF_deep_CondFuserAdd
+run_path: NAF_deep_CondFuserAdd
 model_params:
-  chans: [32, 128, 256, 256, 256, 256]
+  chans: [32, 64, 128, 256, 256, 256]
   enc_blk_nums: [2, 2, 2, 3, 4]
   middle_blk_num: 12
   dec_blk_nums: [2, 2, 2, 2, 2]
@@ -38,6 +38,8 @@ model_params:
   in_channels: 4
   out_channels: 3
   rggb: True
+  use_CondFuserV2: False
+  use_add: True
 
 # --- Loss Configureation ---:
 alpha: 0.2

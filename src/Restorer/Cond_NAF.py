@@ -31,12 +31,6 @@ class ConditionedChannelAttention(nn.Module):
     def __init__(self, dims, cat_dims):
         super().__init__()
         in_dim = dims + cat_dims
-        # self.mlp = nn.Sequential(
-        #     nn.Linear(in_dim, int(in_dim*1.5)),
-        #     nn.GELU(),
-        #     nn.Dropout(0.2),
-        #     nn.Linear(int(in_dim*1.5), dims)
-        # )
         self.mlp = nn.Sequential(nn.Linear(in_dim, dims))
         self.pool = nn.AdaptiveAvgPool2d(1)
 
@@ -49,6 +43,76 @@ class ConditionedChannelAttention(nn.Module):
 
         return ca
     
+class CondFuser(nn.Module):
+    def __init__(self, chan, cond_chan=1):
+        super().__init__()
+        self.cca = ConditionedChannelAttention(chan * 2, cond_chan)
+        # self.spa = nn.Conv2d(
+        #     in_channels=chan * 2,
+        #     out_channels=1,
+        #     kernel_size=3,
+        #     padding=1,
+        #     stride=1,
+        #     groups=1,
+        #     bias=True,
+        # )
+
+    def forward(self, x1, x2, cond):
+        x = torch.cat([x1, x2], dim=1)
+        x = self.cca(x, cond) * x
+        # spa = torch.sigmoid(self.spa(x))
+
+        x1, x2 = x.chunk(2, dim=1)
+        # return x1 * spa + x2 * (1 - spa)
+        return x1 + x2
+
+
+class NKA(nn.Module):
+    def __init__(self, dim, channel_reduction = 8):
+        super().__init__()
+
+        reduced_channels = dim // channel_reduction
+        self.proj_1 = nn.Conv2d(dim, reduced_channels, 1, 1, 0)
+        self.dwconv = nn.Conv2d(reduced_channels, reduced_channels, 3, 1, 1, groups=reduced_channels)
+        self.proj_2 = nn.Conv2d(reduced_channels, reduced_channels * 2, 1, 1, 0)
+        self.sg = SimpleGate()
+        self.attention = nn.Conv2d(reduced_channels, dim, 1, 1, 0)
+        
+    def forward(self, x):
+        B, C, H, W = x.shape
+        # First projection to a smaller dimension
+        y = self.proj_1(x)
+        # DW conv
+        attn = self.dwconv(y)
+        # PW to increase channel count for SG
+        attn = self.proj_2(attn)
+        # Non-linearity
+        attn = self.sg(attn)
+        # Back to original dimensions
+        out = x * self.attention(attn)
+        return out
+    
+class CondFuserAdd(nn.Module):
+    def __init__(self, chan, cond_chan=1):
+        super().__init__()
+
+    def forward(self, x1, x2, cond):
+        return x1 + x2
+    
+class CondFuserV2(nn.Module):
+    def __init__(self, chan, cond_chan=1):
+        super().__init__()
+        self.cca = ConditionedChannelAttention(chan * 2, cond_chan)
+        self.spa = NKA(chan * 2)
+
+    def forward(self, x1, x2, cond):
+        x = torch.cat([x1, x2], dim=1)
+        x = self.cca(x, cond) * x
+        spa = torch.sigmoid(self.spa(x)) * x
+        x1, x2 = x.chunk(2, dim=1)
+        return x1 * x2
+
+ 
 
 class NAFBlock0(nn.Module):
     def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.0, cond_chans=0):
@@ -169,18 +233,7 @@ class CondSEBlock(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return x * y.expand_as(x)
     
-class CondFuser(nn.Module):
-    def __init__(self, chan, cond_chan=1):
-        super().__init__()
-        self.cca = ConditionedChannelAttention(chan * 2, cond_chan)
 
-    def forward(self, x1, x2, cond):
-        x = torch.cat([x1, x2], dim=1)
-        x = self.cca(x, cond) * x
-        x1, x2 = x.chunk(2, dim=1)
-        return x1 + x2
-    
-    
 class Restorer(nn.Module):
     def __init__(
         self,
@@ -195,7 +248,9 @@ class Restorer(nn.Module):
         expand_dims=2,
         drop_out_rate=0.0,
         drop_out_rate_increment=0.0,
-        rggb = False
+        rggb = False,
+        use_CondFuserV2 = False,
+        use_add = False
     ):
         super().__init__()
         width = chans[0]
@@ -290,7 +345,13 @@ class Restorer(nn.Module):
                 )
             )
             drop_out_rate -= drop_out_rate_increment 
-            self.merges.append(CondFuser(next_chan, cond_chan=cond_output))
+            if use_CondFuserV2:
+                self.merges.append(CondFuserV2(next_chan, cond_chan=cond_output))
+            elif use_add:
+                self.merges.append(CondFuserAdd(next_chan, cond_chan=cond_output))
+            else:
+                self.merges.append(CondFuser(next_chan, cond_chan=cond_output))
+
             self.decoders.append(
                 nn.Sequential(
                     *[
