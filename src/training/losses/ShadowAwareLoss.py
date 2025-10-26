@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from pytorch_msssim import ms_ssim
-
+from src.training.losses.CombinedPerceptualLoss import VGGPerceptualLoss
 
 class ShadowAwareLoss(nn.Module):
     def __init__(self, 
@@ -13,6 +13,7 @@ class ShadowAwareLoss(nn.Module):
                  vgg_loss_weight=0.0,
                  apply_gamma_fn=None,
                  vgg_feature_extractor=None,
+                 percept_loss_weight = 0,
                  device=None):
         """
         Shadow-aware image restoration loss.
@@ -35,6 +36,8 @@ class ShadowAwareLoss(nn.Module):
         self.apply_gamma_fn = apply_gamma_fn
         self.vfe = vgg_feature_extractor
         self.device = device
+        self.percept_loss_weight = percept_loss_weight
+        self.VGGPerceptualLoss = VGGPerceptualLoss()
 
         if device is not None:
             self.to(device)
@@ -77,12 +80,16 @@ class ShadowAwareLoss(nn.Module):
                 target_features = self.vfe(target)
             vgg_loss_val = nn.functional.mse_loss(pred_features[0], target_features[0])
 
+        percept_loss = 0
+        if self.percept_loss_weight:
+            percept_loss = self.VGGPerceptualLoss(pred, target)
         # Combine weighted terms
         total_loss = (
             self.l1_weight * l1 +
             self.ssim_weight * ssim +
             self.tv_weight * tv +
-            self.vgg_loss_weight * vgg_loss_val
+            self.vgg_loss_weight * vgg_loss_val +
+            self.percept_loss_weight * percept_loss
         )
 
         return total_loss
