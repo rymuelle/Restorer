@@ -114,7 +114,7 @@ def align_clean_to_noisy(clean_img, noisy_img, refine=True, verbose=False):
 
 
 
-def apply_alignment(img, warp_params, interpolation=cv2.INTER_LINEAR):
+def apply_alignment(img, warp_params, interpolation=cv2.INTER_LANCZOS4):
     """
     Applies a previously estimated affine warp to an image.
     warp_params: dict with keys m00..m12 or a 2x3 numpy array.
