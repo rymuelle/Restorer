@@ -194,5 +194,9 @@ cython_debug/
 .cursorindexingignore
 
 
-# MLrn
+# custom ignores
 mlruns/
+.DS_store
+*.png
+*.jpeg
+*.csv
