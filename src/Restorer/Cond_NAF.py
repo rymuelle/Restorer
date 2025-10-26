@@ -92,6 +92,18 @@ class NKA(nn.Module):
         out = x * self.attention(attn)
         return out
     
+
+class CondFuser(nn.Module):
+    def __init__(self, chan, cond_chan=1):
+        super().__init__()
+        self.cca = ConditionedChannelAttention(chan * 2, cond_chan)
+
+    def forward(self, x1, x2, cond):
+        x = torch.cat([x1, x2], dim=1)
+        x = self.cca(x, cond) * x
+        x1, x2 = x.chunk(2, dim=1)
+        return x1 + x2
+    
 class CondFuserAdd(nn.Module):
     def __init__(self, chan, cond_chan=1):
         super().__init__()
@@ -113,6 +125,39 @@ class CondFuserV2(nn.Module):
         return x1 * x2
 
  
+class CondFuserV3(nn.Module):
+    def __init__(self, chan, cond_chan=1):
+        super().__init__()
+        self.cca = ConditionedChannelAttention(chan * 2, cond_chan)
+        self.spa = nn.Conv2d(
+            in_channels=chan * 2,
+            out_channels=1,
+            kernel_size=3,
+            padding=1,
+            stride=1,
+            groups=1,
+            bias=True,
+        )
+
+    def forward(self, x1, x2, cond):
+        x = torch.cat([x1, x2], dim=1)
+        x = self.cca(x, cond) * x
+        spa = torch.sigmoid(self.spa(x))
+
+        x1, x2 = x.chunk(2, dim=1)
+        return x1 * spa + x2 * (1 - spa)
+
+class CondFuserV4(nn.Module):
+    def __init__(self, chan, cond_chan=1):
+        super().__init__()
+        self.cca = ConditionedChannelAttention(chan * 2, cond_chan)
+        self.pw = nn.Conv2d(chan * 2, chan, 1, stride=1, padding=0, groups=1)
+    def forward(self, x1, x2, cond):
+        x = torch.cat([x1, x2], dim=1)
+        x = self.cca(x, cond) * x
+        x = self.pw(x)
+        return x
+    
 
 class NAFBlock0(nn.Module):
     def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.0, cond_chans=0):
@@ -213,6 +258,173 @@ class NAFBlock0(nn.Module):
         x = self.dropout2(x)
 
         return (y + x * self.gamma, cond)
+    
+
+class NAFBlock0_learned_norm(nn.Module):
+    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.0, cond_chans=0):
+        super().__init__()
+        dw_channel = c * DW_Expand
+        self.conv1 = nn.Conv2d(
+            in_channels=c,
+            out_channels=dw_channel,
+            kernel_size=1,
+            padding=0,
+            stride=1,
+            groups=1,
+            bias=True,
+        )
+        self.conv2 = nn.Conv2d(
+            in_channels=dw_channel,
+            out_channels=dw_channel,
+            kernel_size=3,
+            padding=1,
+            stride=1,
+            groups=dw_channel,
+            bias=True,
+        )
+        self.conv3 = nn.Conv2d(
+            in_channels=dw_channel // 2,
+            out_channels=c,
+            kernel_size=1,
+            padding=0,
+            stride=1,
+            groups=1,
+            bias=True,
+        )
+
+        # Simplified Channel Attention
+        self.sca = ConditionedChannelAttention(dw_channel // 2, cond_chans)
+
+        # SimpleGate
+        self.sg = SimpleGate()
+
+        ffn_channel = FFN_Expand * c
+        self.conv4 = nn.Conv2d(
+            in_channels=c,
+            out_channels=ffn_channel,
+            kernel_size=1,
+            padding=0,
+            stride=1,
+            groups=1,
+            bias=True,
+        )
+        self.conv5 = nn.Conv2d(
+            in_channels=ffn_channel // 2,
+            out_channels=c,
+            kernel_size=1,
+            padding=0,
+            stride=1,
+            groups=1,
+            bias=True,
+        )
+
+        # self.grn = GRN(ffn_channel // 2)
+
+        self.norm1 = LayerNorm2d(c)
+        self.norm2 = LayerNorm2d(c)
+
+        self.dropout1 = (
+            nn.Dropout(drop_out_rate) if drop_out_rate > 0.0 else nn.Identity()
+        )
+        self.dropout2 = (
+            nn.Dropout(drop_out_rate) if drop_out_rate > 0.0 else nn.Identity()
+        )
+
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+        self.sca_mul = ConditionedChannelAttention(c, cond_chans)
+        self.sca_add = ConditionedChannelAttention(c, cond_chans)
+
+    def forward(self, input):
+        inp = input[0]
+        cond = input[1]
+
+        x = inp
+
+        x = self.norm1(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.sg(x)
+        x = x * self.sca(x, cond)
+        x = self.conv3(x)
+
+        x = self.dropout1(x)
+
+        y = inp + x * self.beta
+
+        # Channel Mixing
+        normed = self.norm2(y)
+
+        # Input mediated channel attention, obstensibly to mitigate the effects of group norm on flat scenes
+        x = (1 + self.sca_mul(inp, cond)) * normed + self.sca_add(inp, cond)
+
+        x = self.conv4(x)
+        x = self.sg(x)
+        # x = self.grn(x)
+        x = self.conv5(x)
+
+        x = self.dropout2(x)
+
+
+
+        return (y + x * self.gamma, cond)
+    
+
+import torch.nn.functional as F
+
+class SwiGLU(nn.Module):
+
+    def __init__(self, input_dim, hidden_dim, dropout=0.1):
+        super().__init__()
+        self.w1 = nn.Conv2d(input_dim, hidden_dim, 1, 1, 0, 1)
+        self.w2 = nn.Conv2d(input_dim, hidden_dim, 1, 1, 0, 1)
+        self.w3 = nn.Conv2d(hidden_dim, input_dim, 1, 1, 0, 1)
+        
+    def forward(self, x):
+        gate = F.silu(self.w1(x)) 
+        value = self.w2(x)
+        x = gate * value 
+        
+        x = self.w3(x)
+        return x
+    
+class AttnBlock(nn.Module):
+    def __init__(self, c, FFN_Expand=2, drop_out_rate=0.0, cond_chans=0):
+        super().__init__()
+        
+        self.dw = nn.Conv2d(
+            in_channels=c,
+            out_channels=c,
+            kernel_size=3,
+            padding=1,
+            stride=1,
+            groups=c,
+            bias=True,
+        )
+        self.nka = NKA(c)
+
+        self.sca = ConditionedChannelAttention(c, cond_chans)
+
+        self.norm = nn.GroupNorm(1, c)
+        
+        self.swiglu = SwiGLU(c, int(c *  FFN_Expand))
+        self.alpha = nn.Parameter(torch.zeros(1, c, 1, 1))
+        self.beta = nn.Parameter(torch.zeros(1, c, 1, 1))
+
+
+    def forward(self, input):
+        inp = input[0]
+        cond = input[1]
+
+        x = self.dw(inp)
+        x = self.nka(x)
+        x = self.sca(x, cond) * x
+        y = self.norm(inp + self.alpha * x )
+
+
+        x = self.swiglu(y)
+        x = y + self.beta * x
+        return (x, cond)
 
 
 class CondSEBlock(nn.Module):
@@ -234,6 +446,37 @@ class CondSEBlock(nn.Module):
         return x * y.expand_as(x)
     
 
+
+class ConditioningCNN(nn.Module):
+    def __init__(self, in_channels=4, num_logits=128):
+        """
+        Args:
+            in_channels (int): Number of input channels (e.g., 3 for RGB).
+            num_logits (int): The desired size of the output 1D logit vector.
+        """
+        super().__init__()
+        
+        self.encoder = nn.Sequential(
+            nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding='same'),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding='same'),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding='same'),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding='same'),
+            nn.ReLU(inplace=True)
+        )
+        
+        self.logit_head = nn.Sequential(
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(256, num_logits)
+        )
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.logit_head(x)
+        return x
+    
 class Restorer(nn.Module):
     def __init__(
         self,
@@ -250,15 +493,40 @@ class Restorer(nn.Module):
         drop_out_rate_increment=0.0,
         rggb = False,
         use_CondFuserV2 = False,
-        use_add = False
+        use_add = False,
+        use_CondFuserV3 = False,
+        use_CondFuserV4 = False,
+        use_attnblock = False,
+        use_NAFBlock0_learned_norm=False,
+        use_cond_net = False,
+        cond_net_num = 32, 
+        use_input_stats=False,
     ):
         super().__init__()
+        if use_attnblock:
+            block = AttnBlock
+        elif use_NAFBlock0_learned_norm:
+            block = NAFBlock0_learned_norm
+        else:
+            block = NAFBlock0
+
         width = chans[0]
 
         self.expand_dims = expand_dims
         self.conditioning_gen = nn.Sequential(
             nn.Linear(cond_input, 64), nn.ReLU(), nn.Dropout(drop_out_rate), nn.Linear(64, cond_output),
         )
+
+
+        self.use_cond_net = use_cond_net
+        if use_cond_net:
+            self.cond_net = ConditioningCNN(in_channels=in_channels, num_logits=cond_net_num)
+            cond_output = cond_output + cond_net_num
+
+        self.use_input_stats = use_input_stats
+        if use_input_stats:
+            cond_output = cond_output + in_channels * 2
+
         self.rggb = rggb
         if not rggb:
             self.intro = nn.Conv2d(
@@ -320,7 +588,7 @@ class Restorer(nn.Module):
             self.encoders.append(
                 nn.Sequential(
                     *[
-                        NAFBlock0(current_chan, cond_chans=cond_output, drop_out_rate=drop_out_rate)
+                        block(current_chan, cond_chans=cond_output, drop_out_rate=drop_out_rate)
                         for _ in range(num)
                     ]
                 )
@@ -330,7 +598,7 @@ class Restorer(nn.Module):
 
         self.middle_blks = nn.Sequential(
             *[
-                NAFBlock0(next_chan, cond_chans=cond_output, drop_out_rate=drop_out_rate)
+                block(next_chan, cond_chans=cond_output, drop_out_rate=drop_out_rate)
                 for _ in range(middle_blk_num)
             ]
         )
@@ -349,13 +617,17 @@ class Restorer(nn.Module):
                 self.merges.append(CondFuserV2(next_chan, cond_chan=cond_output))
             elif use_add:
                 self.merges.append(CondFuserAdd(next_chan, cond_chan=cond_output))
+            elif use_CondFuserV3:
+                self.merges.append(CondFuserV3(next_chan, cond_chan=cond_output))
+            elif use_CondFuserV4:
+                self.merges.append(CondFuserV4(next_chan, cond_chan=cond_output))
             else:
                 self.merges.append(CondFuser(next_chan, cond_chan=cond_output))
 
             self.decoders.append(
                 nn.Sequential(
                     *[
-                        NAFBlock0(next_chan, cond_chans=cond_output, drop_out_rate=drop_out_rate)
+                        block(next_chan, cond_chans=cond_output, drop_out_rate=drop_out_rate)
                         for _ in range(num)
                     ]
                 )
@@ -368,6 +640,15 @@ class Restorer(nn.Module):
         # Conditioning:
         cond = self.conditioning_gen(cond_in)
 
+        if self.use_cond_net:
+            extra_cond = self.cond_net(inp)
+            cond = torch.cat([cond, extra_cond], dim=1)
+        if self.use_input_stats:
+            mu = inp.mean((2,3), keepdim=True)
+            var = (inp - mu).pow(2).mean((2,3), keepdim=False)
+            mu = mu.squeeze(-1).squeeze(-1)
+            cond = torch.cat([cond, mu, var], dim=1)
+            
         B, C, H, W = inp.shape
         if self.rggb:
             H = 2 * H
