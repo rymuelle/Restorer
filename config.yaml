@@ -7,7 +7,7 @@ cropped_raw_subdir: /Volumes/EasyStore/RAWNIND/Cropped_Raw
 cropped_raw_size: 2000
 align_csv: align_data.csv
 secondary_align_csv: align_phase_v2.csv
-script_path: traces_and_weights
+script_path: /Volumes/EasyStore/models/traces
 mlflow_path: /Volumes/EasyStore/models/mlfow
 
 # --- Training Params ---
@@ -22,13 +22,14 @@ num_epochs_finetuning: 20
 val_split: 0.2
 random_seed: 42
 
+
 # --- Experiment Settings ---
 experiment: NAF_test
 mlflow_experiment: NAFNet_variations
 
 # --- Run Configuration ---:
-run_name: NAF_deep_CondFuserAdd
-run_path: NAF_deep_CondFuserAdd
+run_name: NAF_use_input_stats
+run_path: NAF_deep_test_align
 model_params:
   chans: [32, 64, 128, 256, 256, 256]
   enc_blk_nums: [2, 2, 2, 3, 4]
@@ -39,7 +40,12 @@ model_params:
   out_channels: 3
   rggb: True
   use_CondFuserV2: False
-  use_add: True
+  use_add: False
+  use_CondFuserV3: False
+  use_attnblock: False
+  use_CondFuserV4: False
+  use_NAFBlock0_learned_norm: True
+  use_input_stats: True
 
 # --- Loss Configureation ---:
 alpha: 0.2
@@ -48,3 +54,4 @@ l1_weight: 0.16
 ssim_weight: 0.84
 tv_weight: 0.0
 vgg_loss_weight: 0
+percept_loss_weight: 0
