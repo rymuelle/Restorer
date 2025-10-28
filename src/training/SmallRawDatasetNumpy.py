@@ -25,7 +25,7 @@ class SmallRawDatasetNumpy(Dataset):
         self.coordinate_iso = 6400
         self.validation=validation
         self.run_align = run_align
-        self.dtype = np.uint16
+        self.dtype = np.float16
         self.dimensions = dimensions
     def __len__(self):
         return len(self.df)
@@ -46,8 +46,8 @@ class SmallRawDatasetNumpy(Dataset):
 
        
 
-        gt_image  = gt_image/65535
-        bayer_data = bayer_data/65535
+        gt_image  = gt_image
+        bayer_data = bayer_data
         gt_image = demosaicing_CFA_Bayer_Malvar2004(gt_image)
         demosaiced_noisy = demosaicing_CFA_Bayer_Malvar2004(bayer_data)
 
@@ -58,7 +58,6 @@ class SmallRawDatasetNumpy(Dataset):
             aligned = aligned / 255
         else:
             aligned = apply_alignment(gt_image, row.to_dict())
-
         h, w, _ = gt_image.shape
         
         #Crop images
