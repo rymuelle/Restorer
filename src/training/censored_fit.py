@@ -1,7 +1,8 @@
 import numpy as np
 from scipy.stats import norm
 
-def censored_linear_fit_twosided(x, y, clip_low=None, clip_high=None, max_iter=200, tol=1e-6, include_offset=True):
+def censored_linear_fit_twosided(x, y, clip_low=None, clip_high=None,
+                                 max_iter=200, tol=1e-6, include_offset=True):
     """
     Fit y ≈ a + b*x + ε, ε ~ N(0, σ²) under two-sided censoring:
     clip_low ≤ y_true ≤ clip_high
@@ -18,33 +19,29 @@ def censored_linear_fit_twosided(x, y, clip_low=None, clip_high=None, max_iter=2
         Maximum EM iterations.
     tol : float
         Relative tolerance for convergence.
-    include_offset: bool
-        Compute linear fit with offset (y = b * x + a)
+    include_offset : bool
+        If False, forces intercept a=0 (fit y ≈ b*x).
+
     Returns
     -------
     a, b, sigma : floats
         Estimated regression parameters.
     """
-
     x = np.asarray(x).ravel()
     y = np.asarray(y).ravel()
     mask = np.isfinite(x) & np.isfinite(y)
     x, y = x[mask], y[mask]
 
-    n = len(x)
-    if n < 3:
+    if len(x) < 3:
         raise ValueError("Not enough data points.")
 
     # --- initial guess (ordinary least squares) ---
     if include_offset:
         A = np.vstack([np.ones_like(x), x]).T
+        a, b = np.linalg.lstsq(A, y, rcond=None)[0]
     else:
-        A = np.vstack([x]).T
-    coef, *_ = np.linalg.lstsq(A, y, rcond=None)
-    if include_offset:
-        a, b = coef
-    else:
-        a, b = 0, coef[0]
+        b = np.dot(x, y) / np.dot(x, x)
+        a = 0.0
     sigma = np.std(y - (a + b*x))
 
     for _ in range(max_iter):
@@ -79,18 +76,17 @@ def censored_linear_fit_twosided(x, y, clip_low=None, clip_high=None, max_iter=2
         # M-step: re-fit with imputed expectations
         if include_offset:
             A = np.vstack([np.ones_like(x), x]).T
+            a_new, b_new = np.linalg.lstsq(A, y_exp, rcond=None)[0]
         else:
-            A = np.vstack([x]).T
-        coef, *_ = np.linalg.lstsq(A, y, rcond=None)
-        if include_offset:
-            a_new, b_new = coef
-        else:
-            a_new, b_new = 0, coef[0]
+            b_new = np.dot(x, y_exp) / np.dot(x, x)
+            a_new = 0.0
+
         sigma_new = np.std(y_exp - (a_new + b_new*x))
 
-        if np.allclose([a, b, sigma], [a_new, b_new, sigma_new], rtol=tol, atol=tol):
+        if np.allclose([a, b, sigma], [a_new, b_new, sigma_new],
+                       rtol=tol, atol=tol):
             break
+
         a, b, sigma = a_new, b_new, sigma_new
 
     return a, b, sigma
-
