@@ -200,3 +200,5 @@ mlruns/
 *.png
 *.jpeg
 *.csv
+*.xmp
+*.dng
