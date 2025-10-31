@@ -2,6 +2,28 @@ import torch.nn.functional as F
 import torch
 import torch.nn as nn
 
+
+class LayerNorm2dAdjusted(nn.Module):
+    def __init__(self, channels, eps=1e-6):
+        super(LayerNorm2d, self).__init__()
+        self.register_parameter("weight", nn.Parameter(torch.ones(channels)))
+        self.register_parameter("bias", nn.Parameter(torch.zeros(channels)))
+        self.eps = eps
+        
+    def forward(self, x, target_mu, target_var):
+        mu = x.mean(1, keepdim=True)
+        var = (x - mu).pow(2).mean(1, keepdim=True)
+        
+        y = (x - mu) / torch.sqrt(var + self.eps)
+
+        y = y * torch.sqrt(target_var + self.eps) + target_mu
+        
+        weight_view = self.weight.view(1, self.weight.size(0), 1, 1)
+        bias_view = self.bias.view(1, self.bias.size(0), 1, 1)
+        
+        y = weight_view * y + bias_view
+        return y
+
 class LayerNorm2d(nn.Module):
     def __init__(self, channels, eps=1e-6):
         super(LayerNorm2d, self).__init__()
@@ -369,6 +391,113 @@ class NAFBlock0_learned_norm(nn.Module):
 
         return (y + x * self.gamma, cond)
     
+class NAFBlock0AdjustedNorm(nn.Module):
+    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.0, cond_chans=0):
+        super().__init__()
+        dw_channel = c * DW_Expand
+        self.conv1 = nn.Conv2d(
+            in_channels=c,
+            out_channels=dw_channel,
+            kernel_size=1,
+            padding=0,
+            stride=1,
+            groups=1,
+            bias=True,
+        )
+        self.conv2 = nn.Conv2d(
+            in_channels=dw_channel,
+            out_channels=dw_channel,
+            kernel_size=3,
+            padding=1,
+            stride=1,
+            groups=dw_channel,
+            bias=True,
+        )
+        self.conv3 = nn.Conv2d(
+            in_channels=dw_channel // 2,
+            out_channels=c,
+            kernel_size=1,
+            padding=0,
+            stride=1,
+            groups=1,
+            bias=True,
+        )
+
+        # Simplified Channel Attention
+        self.sca = ConditionedChannelAttention(dw_channel // 2, cond_chans)
+
+        # SimpleGate
+        self.sg = SimpleGate()
+
+        ffn_channel = FFN_Expand * c
+        self.conv4 = nn.Conv2d(
+            in_channels=c,
+            out_channels=ffn_channel,
+            kernel_size=1,
+            padding=0,
+            stride=1,
+            groups=1,
+            bias=True,
+        )
+        self.conv5 = nn.Conv2d(
+            in_channels=ffn_channel // 2,
+            out_channels=c,
+            kernel_size=1,
+            padding=0,
+            stride=1,
+            groups=1,
+            bias=True,
+        )
+
+        # self.grn = GRN(ffn_channel // 2)
+
+        self.norm1 = LayerNorm2dAdjusted(c)
+        self.norm2 = LayerNorm2dAdjusted(c)
+
+        self.dropout1 = (
+            nn.Dropout(drop_out_rate) if drop_out_rate > 0.0 else nn.Identity()
+        )
+        self.dropout2 = (
+            nn.Dropout(drop_out_rate) if drop_out_rate > 0.0 else nn.Identity()
+        )
+
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+        self.sca_mul = ConditionedChannelAttention(c, cond_chans)
+        self.sca_add = ConditionedChannelAttention(c, cond_chans)
+
+    def forward(self, input):
+        inp = input[0]
+        cond = input[1]
+
+        x = inp
+
+        x = self.norm1(x, mu, var)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.sg(x)
+        x = x * self.sca(x, cond)
+        x = self.conv3(x)
+
+        x = self.dropout1(x)
+
+        y = inp + x * self.beta
+
+        # Channel Mixing
+        normed = self.norm2(y, mu, var)
+
+        # Input mediated channel attention, obstensibly to mitigate the effects of group norm on flat scenes
+        # x = (1 + self.sca_mul(inp, cond)) * normed + self.sca_add(inp, cond)
+
+        x = self.conv4(normed)
+        x = self.sg(x)
+        # x = self.grn(x)
+        x = self.conv5(x)
+
+        x = self.dropout2(x)
+
+        return (y + x * self.gamma, cond, mu, var)
+
 
 import torch.nn.functional as F
 
@@ -501,12 +630,15 @@ class Restorer(nn.Module):
         use_cond_net = False,
         cond_net_num = 32, 
         use_input_stats=False,
+        use_NAFBlock0AdjustedNorm=False,
     ):
         super().__init__()
         if use_attnblock:
             block = AttnBlock
         elif use_NAFBlock0_learned_norm:
             block = NAFBlock0_learned_norm
+        elif use_NAFBlock0AdjustedNorm:
+            block = NAFBlock0AdjustedNorm
         else:
             block = NAFBlock0
 
@@ -640,14 +772,14 @@ class Restorer(nn.Module):
         # Conditioning:
         cond = self.conditioning_gen(cond_in)
 
-        if self.use_cond_net:
-            extra_cond = self.cond_net(inp)
-            cond = torch.cat([cond, extra_cond], dim=1)
-        if self.use_input_stats:
-            mu = inp.mean((2,3), keepdim=True)
-            var = (inp - mu).pow(2).mean((2,3), keepdim=False)
-            mu = mu.squeeze(-1).squeeze(-1)
-            cond = torch.cat([cond, mu, var], dim=1)
+        # if self.use_cond_net:
+        #     extra_cond = self.cond_net(inp)
+        #     cond = torch.cat([cond, extra_cond], dim=1)
+        # if self.use_input_stats:
+        #     mu = inp.mean((2,3), keepdim=True)
+        #     var = (inp - mu).pow(2).mean((2,3), keepdim=False)
+        #     mu = mu.squeeze(-1).squeeze(-1)
+        #     cond = torch.cat([cond, mu, var], dim=1)
             
         B, C, H, W = inp.shape
         if self.rggb:
@@ -682,18 +814,48 @@ class Restorer(nn.Module):
     
 class ModelWrapper(nn.Module):
     def __init__(self, **kwargs):
+        self.gamma = 1
+        if 'gamma' in kwargs:
+            self.gamma = kwargs.pop('gamma')
         super().__init__()
         self.model = Restorer(
             **kwargs
         )
 
     def forward(self, x, cond, residual):
+        x = x.clip(0, 1) ** (1. / self.gamma)
+        residual = residual.clip(0, 1) ** (1. / self.gamma)
         output = self.model(x, cond)
-        return residual + output
+        output = (residual + output).clip(0, 1) ** (self.gamma)
+        return output
     
 
 def make_full_model_RGGB(params, model_name=None):
     model = ModelWrapper(**params)
+    if not model_name is None:
+        state_dict = torch.load(model_name, map_location="cpu")
+        model.load_state_dict(state_dict)
+    return model
+
+
+class DemosaicingModelWrapper(nn.Module):
+    def __init__(self, **kwargs):
+        self.gamma = 1
+        if 'gamma' in kwargs:
+            self.gamma = kwargs.pop('gamma')
+        super().__init__()
+        self.model = Restorer(
+            **kwargs
+        )
+
+    def forward(self, x, cond):
+        x = x.clip(0, 1) ** (1. / self.gamma)
+        output = (self.model(x, cond)).clip(0,1) ** (self.gamma)
+        return output
+    
+
+def make_full_model_RGGB_Demosaicing(params, model_name=None):
+    model = DemosaicingModelWrapper(**params)
     if not model_name is None:
         state_dict = torch.load(model_name, map_location="cpu")
         model.load_state_dict(state_dict)
