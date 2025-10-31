@@ -63,6 +63,7 @@ def train_one_epoch(epoch, _model, _optimizer, _loader, _device, _loss_func, _cl
     mlflow.log_metric("train_loss", total_loss/n_images, step=epoch)
     mlflow.log_metric("l1_loss", total_l1_loss/n_images, step=epoch)
     mlflow.log_metric("epoch_duration_s", train_time, step=epoch)
+    mlflow.log_metric("learning_rate", _optimizer.param_groups[0]['lr'], step=epoch)
 
     return total_loss / max(1, n_images), perf_counter()-start
 
