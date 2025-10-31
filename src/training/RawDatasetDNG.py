@@ -59,6 +59,19 @@ def random_crop_dim(shape, crop_size, buffer, validation=False):
         right = left + crop_size
         return (left, right, top, bottom)
 
+def check_align_matrix(row, tolerance=1e-7):
+        is_identity = np.isclose(row['M00'], 1.0, atol=tolerance) and \
+        np.isclose(row['M01'], 0.0, atol=tolerance) and \
+        np.isclose(row['M10'], 0.0, atol=tolerance) and \
+        np.isclose(row['M11'], 1.0, atol=tolerance)
+
+        assert is_identity, "Rotations, scalings, or shearing are not tested."
+
+
+def round_to_nearest_2(number):
+  return round(number / 2) * 2
+
+
 class RawDatasetDNG(Dataset):
     def __init__(self, path, csv, colorspace, crop_size=180, buffer=10, validation=False, run_align=False, dimensions=2000):
         super().__init__()
@@ -99,11 +112,19 @@ class RawDatasetDNG(Dataset):
             noisy = noisy_rh.as_rgb(dims=dims, colorspace=self.colorspace)
             rggb = noisy_rh.as_rggb(dims=dims, colorspace=self.colorspace)
             sparse = noisy_rh.as_sparse(dims=dims, colorspace=self.colorspace)
-
+            
+            check_align_matrix(row) 
             expanded_dims = [dims[0]-self.buffer, dims[1]+self.buffer, dims[2]-self.buffer, dims[3]+self.buffer]
             gt_expanded = gt_rh.as_rgb(dims=expanded_dims, colorspace=self.colorspace)
             aligned = apply_alignment(gt_expanded.transpose(1, 2, 0), row.to_dict())[self.buffer:-self.buffer, self.buffer:-self.buffer]
             gt_non_aligned = gt_expanded.transpose(1, 2, 0)[self.buffer:-self.buffer, self.buffer:-self.buffer]
+            # # gt_non_aligned = gt_non_aligned * noisy.mean() / aligned.mean()
+            # # aligned = aligned * noisy.mean() / aligned.mean()
+            # # Get Raw data for testing
+            # noisy_raw = noisy_rh.raw[dims[0]:dims[1], dims[2]: dims[3]]
+            # row_dict = row.to_dict()
+            # shift_y, shift_x = round_to_nearest_2(row_dict['M12']), round_to_nearest_2(row_dict['M11'])
+            # gt_raw = gt_rh.raw[dims[0]+shift_y:dims[1]+shift_y, dims[2]+shift_x:dims[3]+shift_x]
         except:
             print(name, gt_name)
 
@@ -118,6 +139,8 @@ class RawDatasetDNG(Dataset):
             "noisy": torch.tensor(noisy).to(float).clip(0,1), 
             "rggb": torch.tensor(rggb).to(float).clip(0,1),
             "conditioning": torch.tensor([row.iso/self.coordinate_iso]).to(float), 
+            # "noisy_raw": noisy_raw, 
+            # "gt_raw": gt_raw,
             # "noise_est": noise_est,
             # "rggb_gt": rggb_gt,
         }
