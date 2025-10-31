@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from pytorch_msssim import ms_ssim
 from src.training.losses.CombinedPerceptualLoss import VGGPerceptualLoss
+import torchvision
 
 class ShadowAwareLoss(nn.Module):
     def __init__(self, 
@@ -14,7 +15,8 @@ class ShadowAwareLoss(nn.Module):
                  apply_gamma_fn=None,
                  vgg_feature_extractor=None,
                  percept_loss_weight = 0,
-                 device=None):
+                 device=None,
+                 sharpness_loss_weight=0):
         """
         Shadow-aware image restoration loss.
 
@@ -38,6 +40,7 @@ class ShadowAwareLoss(nn.Module):
         self.device = device
         self.percept_loss_weight = percept_loss_weight
         self.VGGPerceptualLoss = VGGPerceptualLoss()
+        self.sharpness_loss_weight = sharpness_loss_weight
 
         if device is not None:
             self.to(device)
@@ -83,13 +86,26 @@ class ShadowAwareLoss(nn.Module):
         percept_loss = 0
         if self.percept_loss_weight:
             percept_loss = self.VGGPerceptualLoss(pred, target)
+
+        sharpness_loss_value = 0
+        if self.sharpness_loss_weight:
+            sharpness_loss_value += sharpness_loss(pred, target)
+
         # Combine weighted terms
         total_loss = (
             self.l1_weight * l1 +
             self.ssim_weight * ssim +
             self.tv_weight * tv +
             self.vgg_loss_weight * vgg_loss_val +
-            self.percept_loss_weight * percept_loss
+            self.percept_loss_weight * percept_loss +
+            self.sharpness_loss_weight * sharpness_loss_value
         )
 
         return total_loss
+
+def sharpness_loss(pred, target, loss_func = torch.nn.functional.l1_loss):
+    loss = loss_func(pred, target)
+    pred_prime = torchvision.transforms.functional.gaussian_blur(pred, kernel_size=[5, 5], sigma=[1.0, 1.0])
+    target_prime = torchvision.transforms.functional.gaussian_blur(target, kernel_size=[5, 5], sigma=[1.0, 1.0])
+    loss += loss_func(pred-pred_prime, target-target_prime)
+    return loss
