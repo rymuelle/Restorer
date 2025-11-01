@@ -225,10 +225,7 @@ class DemosaicingDataset(Dataset):
             # Create (4, H_out/2, W_out/2) RGGB stack
             input_cfa_hw_expanded = np.expand_dims(input_cfa_hw, 0)
             input_rggb_stack = pixel_unshuffle(input_cfa_hw_expanded, 2)
-            # input_rggb_stack = cfa_to_rggb_stack(
-            #     input_cfa_hw, 
-            #     pattern=self.bayer_pattern
-            # )
+            
             # Convert to (4, H_out/2, W_out/2) tensor
             input_rggb_tensor = torch.from_numpy(input_rggb_stack).to(torch.float32)
 
