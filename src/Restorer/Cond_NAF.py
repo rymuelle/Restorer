@@ -838,25 +838,35 @@ def make_full_model_RGGB(params, model_name=None):
     return model
 
 
-class DemosaicingModelWrapper(nn.Module):
+
+from src.Restorer.Cond_NAF_demosaic import DemosaicingFromRGGB
+
+class ModelWrapperNoRes(nn.Module):
     def __init__(self, **kwargs):
+        super().__init__()
+        
         self.gamma = 1
         if 'gamma' in kwargs:
             self.gamma = kwargs.pop('gamma')
-        super().__init__()
+
+        self.demosaicer = DemosaicingFromRGGB()
         self.model = Restorer(
             **kwargs
         )
 
-    def forward(self, x, cond):
-        x = x.clip(0, 1) ** (1. / self.gamma)
-        output = (self.model(x, cond)).clip(0,1) ** (self.gamma)
+    def forward(self, rggb, cond):
+        rggb = rggb.clip(0, 1) ** (1. / self.gamma)
+        debayered = self.demosaicer(rggb, cond)
+        debayered = debayered.clip(0, 1) ** (1. / self.gamma)
+        output = self.model(rggb, cond)
+        output = (debayered + output).clip(0, 1) ** (self.gamma)
         return output
     
 
-def make_full_model_RGGB_Demosaicing(params, model_name=None):
-    model = DemosaicingModelWrapper(**params)
+def make_full_model_RGGB_NoRes(params, model_name=None):
+    model = ModelWrapperNoRes(**params)
     if not model_name is None:
         state_dict = torch.load(model_name, map_location="cpu")
         model.load_state_dict(state_dict)
     return model
+
