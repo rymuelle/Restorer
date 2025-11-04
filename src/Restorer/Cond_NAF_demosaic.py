@@ -927,11 +927,10 @@ def make_full_model_RGGB_Demosaicing_Sequential(params, model_name=None):
 
 
 class DemosaicingFromRGGB(nn.Module):
-    def __init__(self, **kwargs):
+    def __init__(self):
+        super().__init__()
         self.demosaicing = Debayer5x5()
-        self.model = Restorer(
-            **kwargs
-        )
+
     def forward(self, x, cond):
         bayer = nn.functional.pixel_shuffle(x, 2)
         debayered = self.demosaicing(bayer)
