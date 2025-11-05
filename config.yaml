@@ -6,7 +6,7 @@ cropped_jpeg_subdir: /Volumes/EasyStore/RAWNIND/JPEGs/Cropped_JPEG
 cropped_raw_subdir: /Users/ryanmueller/Develop/Cropped_Raw/
 cropped_raw_size: 2000
 align_csv: align_data.csv
-secondary_align_csv: align_phase_v2.csv
+secondary_align_csv: align_phase_v2_exposure_corr.csv
 script_path: /Volumes/EasyStore/models/traces
 mlflow_path: /Volumes/EasyStore/models/mlfow
 
@@ -29,7 +29,7 @@ experiment: NAF_test
 mlflow_experiment: NAFNet_variations
 
 # --- Run Configuration ---:
-run_name: NAF_gamma_test
+run_name: NAF_corr_DIST
 run_path: NAF_deep_test_align
 model_params:
   chans: [32, 64, 128, 256, 256, 256]
