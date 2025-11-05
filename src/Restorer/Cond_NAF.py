@@ -844,22 +844,18 @@ from src.Restorer.Cond_NAF_demosaic import DemosaicingFromRGGB
 class ModelWrapperNoRes(nn.Module):
     def __init__(self, **kwargs):
         super().__init__()
-        
-        self.gamma = 1
         if 'gamma' in kwargs:
-            self.gamma = kwargs.pop('gamma')
+            kwargs.pop('gamma')
 
         self.demosaicer = DemosaicingFromRGGB()
         self.model = Restorer(
             **kwargs
         )
 
-    def forward(self, rggb, cond):
-        rggb = rggb.clip(0, 1) ** (1. / self.gamma)
+    def forward(self, rggb, cond, *args):
         debayered = self.demosaicer(rggb, cond)
-        debayered = debayered.clip(0, 1) ** (1. / self.gamma)
         output = self.model(rggb, cond)
-        output = (debayered + output).clip(0, 1) ** (self.gamma)
+        output = (debayered + output)
         return output
     
 
