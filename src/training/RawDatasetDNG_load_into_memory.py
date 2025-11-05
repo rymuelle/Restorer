@@ -16,6 +16,8 @@ import torch
 from pathlib import Path
 from RawHandler.RawHandler import RawHandler
 
+from .align_images import apply_alignment
+
 class RawDatasetDNG(Dataset):
     def __init__(self, path, csv, colorspace, crop_size=180, buffer=10, 
                  validation=False, run_align=False, 
