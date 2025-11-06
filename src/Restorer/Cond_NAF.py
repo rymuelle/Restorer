@@ -215,6 +215,10 @@ class NAFBlock0(nn.Module):
 
         # Simplified Channel Attention
         self.sca = ConditionedChannelAttention(dw_channel // 2, cond_chans)
+        self.sca_out = nn.Sequential(
+            ConditionedChannelAttention(2 * c, cond_chans),
+            nn.Sigmoid()
+            )
 
         # SimpleGate
         self.sg = SimpleGate()
@@ -253,6 +257,7 @@ class NAFBlock0(nn.Module):
 
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
+        self.delta = nn.Parameter(torch.zeros((1, 1, 1, 1)), requires_grad=True)
 
     def forward(self, input):
         inp = input[0]
@@ -278,6 +283,10 @@ class NAFBlock0(nn.Module):
         x = self.conv5(x)
 
         x = self.dropout2(x)
+
+        xp = torch.cat([y,x], dim=-3)
+        xp = (1 + self.delta * self.sca_out(xp)) * xp
+        x, y = xp.chunk(2, dim=-3)
 
         return (y + x * self.gamma, cond)
     
