@@ -215,10 +215,7 @@ class NAFBlock0(nn.Module):
 
         # Simplified Channel Attention
         self.sca = ConditionedChannelAttention(dw_channel // 2, cond_chans)
-        self.sca_out = nn.Sequential(
-            ConditionedChannelAttention(2 * c, cond_chans),
-            nn.Sigmoid()
-            )
+        self.sca_out = ConditionedChannelAttention(c, cond_chans)
 
         # SimpleGate
         self.sg = SimpleGate()
@@ -257,7 +254,7 @@ class NAFBlock0(nn.Module):
 
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
-        self.delta = nn.Parameter(torch.zeros((1, 1, 1, 1)), requires_grad=True)
+        # self.delta = nn.Parameter(torch.zeros((1, 1, 1, 1)), requires_grad=True)
 
     def forward(self, input):
         inp = input[0]
@@ -284,9 +281,8 @@ class NAFBlock0(nn.Module):
 
         x = self.dropout2(x)
 
-        xp = torch.cat([y,x], dim=-3)
-        xp = (1 + self.delta * self.sca_out(xp)) * xp
-        x, y = xp.chunk(2, dim=-3)
+        x = self.sca_out(x) * x
+
 
         return (y + x * self.gamma, cond)
     
@@ -870,6 +866,35 @@ class ModelWrapperNoRes(nn.Module):
 
 def make_full_model_RGGB_NoRes(params, model_name=None):
     model = ModelWrapperNoRes(**params)
+    if not model_name is None:
+        state_dict = torch.load(model_name, map_location="cpu")
+        model.load_state_dict(state_dict)
+    return model
+
+
+class ModelWrapperPS(nn.Module):
+    def __init__(self, **kwargs):
+        super().__init__()
+        if 'gamma' in kwargs:
+            kwargs.pop('gamma')
+        kwargs['rggb'] = False
+        kwargs['out_channels'] = kwargs['out_channels'] * 4
+        self.demosaicer = DemosaicingFromRGGB()
+        self.model = Restorer(
+            **kwargs
+        )
+        self.ps = nn.PixelShuffle(2)
+
+    def forward(self, rggb, cond, *args):
+        debayered = self.demosaicer(rggb, cond)
+        output = self.model(rggb, cond)
+        output = self.ps(output)
+        output = (debayered + output)
+        return output
+    
+
+def make_full_model_PS(params, model_name=None):
+    model = ModelWrapperPS(**params)
     if not model_name is None:
         state_dict = torch.load(model_name, map_location="cpu")
         model.load_state_dict(state_dict)
