@@ -13,8 +13,8 @@ batch_size: 2
 crop_size: 256
 lr_base: 2.5e-5 
 clipping: 1e-2
-num_epochs_pretraining: 30
-num_epochs_finetuning: 20
+num_epochs_pretraining: 270
+num_epochs_finetuning: 100
 val_split: 0.2
 random_seed: 42
 cosine_annealing: False
@@ -25,10 +25,10 @@ experiment: NAF_test
 mlflow_experiment: NAFNet_variations
 
 # --- Run Configuration ---:
-run_name: NAF_l1_SSIM
+run_name: NAF_ps
 run_path: NAF_deep_test_align
 model_params:
-  chans: [32, 64, 128, 256, 256, 256]
+  chans: [64, 128, 256, 512, 512, 512]
   enc_blk_nums: [2, 2, 2, 3, 4]
   middle_blk_num: 12
   dec_blk_nums: [2, 2, 2, 2, 2]

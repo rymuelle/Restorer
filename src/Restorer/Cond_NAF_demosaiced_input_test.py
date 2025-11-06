@@ -254,7 +254,7 @@ class NAFBlock0(nn.Module):
 
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
-        # self.delta = nn.Parameter(torch.zeros((1, 1, 1, 1)), requires_grad=True)
+        self.delta = nn.Parameter(torch.zeros((1, 1, 1, 1)), requires_grad=True)
 
     def forward(self, input):
         inp = input[0]
@@ -281,7 +281,8 @@ class NAFBlock0(nn.Module):
 
         x = self.dropout2(x)
 
-        x = self.sca_out(x) * x
+
+        xp = (1 + self.delta * self.sca_out(x, cond)) * x
 
 
         return (y + x * self.gamma, cond)
@@ -770,7 +771,7 @@ class Restorer(nn.Module):
                 )
             )
 
-
+        self.base_merge = CondFuser(width, cond_chan=cond_output)
         self.padder_size = 2 ** len(self.encoders)
 
     def forward(self, inp, cond_in):
@@ -793,7 +794,7 @@ class Restorer(nn.Module):
         inp = self.check_image_size(inp)
 
         x = self.intro(inp)
-
+        base = x
         encs = []
         for encoder, down in zip(self.encoders, self.downs):
             x = encoder((x, cond))[0]
@@ -806,7 +807,7 @@ class Restorer(nn.Module):
             x = up(x)
             x = merge(x, enc_skip, cond)
             x = decoder((x, cond))[0]
-
+        x = self.base_merge(x, base, cond)
         x = self.ending(x)
         return x[:, :, :H, :W]
 
@@ -872,31 +873,49 @@ def make_full_model_RGGB_NoRes(params, model_name=None):
     return model
 
 
-class ModelWrapperPS(nn.Module):
+
+class ModelWrapperDemoInput(nn.Module):
     def __init__(self, **kwargs):
         super().__init__()
+
+        self.intro = nn.Sequential(
+            nn.Conv2d(
+                in_channels=4,
+                out_channels=(29) * 2 ** 2,
+                kernel_size=3,
+                padding=1,
+                stride=1,
+                groups=1,
+                bias=True,
+            ),
+            nn.PixelShuffle(2)
+        )
+
         if 'gamma' in kwargs:
             kwargs.pop('gamma')
-        kwargs['rggb'] = False
-        kwargs['out_channels'] = kwargs['out_channels'] * 4
+        kwargs.pop('rggb')
+        kwargs.pop('in_channels')
+
         self.demosaicer = DemosaicingFromRGGB()
         self.model = Restorer(
+            rggb=False,
+            in_channels = 32,
             **kwargs
         )
-        self.ps = nn.PixelShuffle(2)
+
 
     def forward(self, rggb, cond, *args):
         debayered = self.demosaicer(rggb, cond)
-        output = self.model(rggb, cond)
-        output = self.ps(output)
+        intro = self.intro(rggb)
+        intro = torch.cat([debayered, intro], dim=-3)
+        output = self.model(intro, cond)
         output = (debayered + output)
         return output
     
 
-def make_full_model_PS(params, model_name=None):
-    model = ModelWrapperPS(**params)
+def make_full_model_RGGB_Debayer_Inp(params, model_name=None):
+    model = ModelWrapperDemoInput(**params)
     if not model_name is None:
         state_dict = torch.load(model_name, map_location="cpu")
         model.load_state_dict(state_dict)
     return model
-
