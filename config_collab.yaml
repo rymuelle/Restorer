@@ -25,10 +25,10 @@ experiment: NAF_test
 mlflow_experiment: NAFNet_variations
 
 # --- Run Configuration ---:
-run_name: NAF_l1_SSIM
+run_name: NAF_ps
 run_path: NAF_deep_test_align
 model_params:
-  chans: [32, 64, 128, 256, 256, 256]
+  chans: [64, 128, 256, 512, 512, 512]
   enc_blk_nums: [2, 2, 2, 3, 4]
   middle_blk_num: 12
   dec_blk_nums: [2, 2, 2, 2, 2]
