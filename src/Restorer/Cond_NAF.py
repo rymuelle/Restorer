@@ -281,7 +281,7 @@ class NAFBlock0(nn.Module):
 
         x = self.dropout2(x)
 
-        x = self.sca_out(x) * x
+        x = self.sca_out(x, cond) * x
 
 
         return (y + x * self.gamma, cond)
