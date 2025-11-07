@@ -215,7 +215,7 @@ class NAFBlock0(nn.Module):
 
         # Simplified Channel Attention
         self.sca = ConditionedChannelAttention(dw_channel // 2, cond_chans)
-        self.sca_out = ConditionedChannelAttention(c, cond_chans)
+        # self.sca_out = ConditionedChannelAttention(c, cond_chans)
 
         # SimpleGate
         self.sg = SimpleGate()
@@ -281,7 +281,7 @@ class NAFBlock0(nn.Module):
 
         x = self.dropout2(x)
 
-        x = self.sca_out(x, cond) * x
+        # x = self.sca_out(x, cond) * x
 
 
         return (y + x * self.gamma, cond)
