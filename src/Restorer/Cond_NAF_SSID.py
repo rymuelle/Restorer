@@ -16,8 +16,77 @@ Simple Baselines for Image Restoration
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from basicsr.models.archs.arch_util import LayerNorm2d
-from basicsr.models.archs.local_arch import Local_Base
+
+class LayerNorm2dAdjusted(nn.Module):
+    def __init__(self, channels, eps=1e-6):
+        super(LayerNorm2d, self).__init__()
+        self.register_parameter("weight", nn.Parameter(torch.ones(channels)))
+        self.register_parameter("bias", nn.Parameter(torch.zeros(channels)))
+        self.eps = eps
+        
+    def forward(self, x, target_mu, target_var):
+        mu = x.mean(1, keepdim=True)
+        var = (x - mu).pow(2).mean(1, keepdim=True)
+        
+        y = (x - mu) / torch.sqrt(var + self.eps)
+
+        y = y * torch.sqrt(target_var + self.eps) + target_mu
+        
+        weight_view = self.weight.view(1, self.weight.size(0), 1, 1)
+        bias_view = self.bias.view(1, self.bias.size(0), 1, 1)
+        
+        y = weight_view * y + bias_view
+        return y
+
+class LayerNorm2d(nn.Module):
+    def __init__(self, channels, eps=1e-6):
+        super(LayerNorm2d, self).__init__()
+        self.register_parameter("weight", nn.Parameter(torch.ones(channels)))
+        self.register_parameter("bias", nn.Parameter(torch.zeros(channels)))
+        self.eps = eps
+        
+    def forward(self, x):
+        mu = x.mean(1, keepdim=True)
+        var = (x - mu).pow(2).mean(1, keepdim=True)
+        
+        y = (x - mu) / torch.sqrt(var + self.eps)
+        
+        weight_view = self.weight.view(1, self.weight.size(0), 1, 1)
+        bias_view = self.bias.view(1, self.bias.size(0), 1, 1)
+        
+        y = weight_view * y + bias_view
+        return y
+
+class ChannelAttention(nn.Module):
+    def __init__(self, dims):
+        super().__init__()
+        self.sca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_channels=dims, out_channels=dims, kernel_size=1, padding=0, stride=1,
+                      groups=1, bias=True),
+        )
+
+    def forward(self, x):
+        return self.sca(x)
+
+class CondFuser(nn.Module):
+    def __init__(self, chan):
+        super().__init__()
+        self.cca = ChannelAttention(chan * 2)
+
+    def forward(self, x1, x2):
+        x = torch.cat([x1, x2], dim=1)
+        x = self.cca(x) * x
+
+        x1, x2 = x.chunk(2, dim=1)
+        return x1 + x2
+
+class CondFuserAdd(nn.Module):
+    def __init__(self, chan):
+        super().__init__()
+
+    def forward(self, x1, x2):
+        return x1 + x2
 
 class SimpleGate(nn.Module):
     def forward(self, x):
@@ -82,7 +151,8 @@ class NAFBlock(nn.Module):
 
 class NAFNet(nn.Module):
 
-    def __init__(self, img_channel=3, width=16, middle_blk_num=1, enc_blk_nums=[], dec_blk_nums=[]):
+    def __init__(self, img_channel=3, width=16, middle_blk_num=1, enc_blk_nums=[], dec_blk_nums=[],
+                use_add = False):
         super().__init__()
 
         self.intro = nn.Conv2d(in_channels=img_channel, out_channels=width, kernel_size=3, padding=1, stride=1, groups=1,
@@ -95,6 +165,7 @@ class NAFNet(nn.Module):
         self.middle_blks = nn.ModuleList()
         self.ups = nn.ModuleList()
         self.downs = nn.ModuleList()
+        self.merges = nn.ModuleList()
 
         chan = width
         for num in enc_blk_nums:
@@ -127,6 +198,11 @@ class NAFNet(nn.Module):
                 )
             )
 
+            if use_add:
+                self.merges.append(CondFuserAdd(chan))
+            else:
+                self.merges.append(CondFuser(chan))
+
         self.padder_size = 2 ** len(self.encoders)
 
     def forward(self, inp):
@@ -144,9 +220,9 @@ class NAFNet(nn.Module):
 
         x = self.middle_blks(x)
 
-        for decoder, up, enc_skip in zip(self.decoders, self.ups, encs[::-1]):
+        for decoder, up, merge, enc_skip in zip(self.decoders, self.ups, self.merges, encs[::-1]):
             x = up(x)
-            x = x + enc_skip
+            x = merge(x, enc_skip)
             x = decoder(x)
 
         x = self.ending(x)
