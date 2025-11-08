@@ -900,3 +900,29 @@ def make_full_model_PS(params, model_name=None):
         model.load_state_dict(state_dict)
     return model
 
+
+
+class ModelWrapperDemoIn(nn.Module):
+    def __init__(self, **kwargs):
+        super().__init__()
+        if 'gamma' in kwargs:
+            kwargs.pop('gamma')
+
+        self.demosaicer = DemosaicingFromRGGB()
+        self.model = Restorer(
+            **kwargs
+        )
+
+    def forward(self, rggb, cond, *args):
+        debayered = self.demosaicer(rggb, cond)
+        output = self.model(debayered, cond)
+        output = (debayered + output)
+        return output
+    
+
+def make_full_model_RGGB_DemoIn(params, model_name=None):
+    model = ModelWrapperDemoIn(**params)
+    if not model_name is None:
+        state_dict = torch.load(model_name, map_location="cpu")
+        model.load_state_dict(state_dict)
+    return model
