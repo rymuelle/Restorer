@@ -17,7 +17,7 @@ num_epochs_pretraining: 270
 num_epochs_finetuning: 100
 val_split: 0.2
 random_seed: 42
-cosine_annealing: False
+cosine_annealing: True
 iso_range: [0, 999999]
 
 # --- Experiment Settings ---
@@ -25,17 +25,19 @@ experiment: NAF_test
 mlflow_experiment: NAFNet_variations
 
 # --- Run Configuration ---:
-run_name: NAF_ps
+run_name: NAF_debayer_in
 run_path: NAF_deep_test_align
 model_params:
-  chans: [64, 128, 256, 512, 512, 512]
+  # chans: [64, 128, 256, 512, 512, 512]
+  chans: [32, 64, 128, 256, 256, 256]
+
   enc_blk_nums: [2, 2, 2, 3, 4]
   middle_blk_num: 12
   dec_blk_nums: [2, 2, 2, 2, 2]
   cond_input: 1
-  in_channels: 4
+  in_channels: 3
   out_channels: 3
-  rggb: True
+  rggb: False
   use_CondFuserV2: False
   use_add: False
   use_CondFuserV3: False
