@@ -15,6 +15,7 @@ Simple Baselines for Image Restoration
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as tF
 
 class LayerNorm2dAdjusted(nn.Module):
     def __init__(self, channels, eps=1e-6):
@@ -56,17 +57,25 @@ class LayerNorm2d(nn.Module):
         y = weight_view * y + bias_view
         return y
 
-class ChannelAttention(nn.Module):
-    def __init__(self, dims):
+class GlobalReasoningModule(nn.Module):
+    def __init__(self, chans, global_chans):
         super().__init__()
-        self.sca = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_channels=dims, out_channels=dims, kernel_size=1, padding=0, stride=1,
-                      groups=1, bias=True),
-        )
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.conv1 = nn.Conv2d(in_channels=chans+global_chans, out_channels=chans+global_chans, kernel_size=1, padding=0, stride=1,
+                      groups=1, bias=True)
+        self.act = nn.GELU()
+        self.conv2 = nn.Conv2d(in_channels=chans+global_chans, out_channels=chans+global_chans, kernel_size=1, padding=0, stride=1,
+                      groups=1, bias=True)  
+        self.split = [chans, global_chans]
 
-    def forward(self, x):
-        return self.sca(x)
+    def forward(self, x, global_x):
+        x = self.pool(x)
+        x = torch.cat([x, global_x], dim=1)
+        x = self.conv1(x)
+        x = self.act(x)
+        x = self.conv2(x)
+        x, global_x = torch.split(x, self.split, dim=-3)
+        return x, global_x
 
 class CondFuser(nn.Module):
     def __init__(self, chan):
@@ -102,7 +111,7 @@ class SimpleGate(nn.Module):
         return x1 * x2
 
 class NAFBlock(nn.Module):
-    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
+    def __init__(self, c, global_c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.):
         super().__init__()
         dw_channel = c * DW_Expand
         self.conv1 = nn.Conv2d(in_channels=c, out_channels=dw_channel, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
@@ -111,11 +120,12 @@ class NAFBlock(nn.Module):
         self.conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
 
         # Simplified Channel Attention
-        self.sca = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_channels=dw_channel // 2, out_channels=dw_channel // 2, kernel_size=1, padding=0, stride=1,
-                      groups=1, bias=True),
-        )
+        # self.sca = nn.Sequential(
+        #     nn.AdaptiveAvgPool2d(1),
+        #     nn.Conv2d(in_channels=dw_channel // 2, out_channels=dw_channel // 2, kernel_size=1, padding=0, stride=1,
+        #               groups=1, bias=True),
+        # )
+        self.grm = GlobalReasoningModule(c, global_c)
 
         # SimpleGate
         self.sg = SimpleGate()
@@ -132,16 +142,19 @@ class NAFBlock(nn.Module):
 
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
-
-    def forward(self, inp):
+        self.delta = nn.Parameter(torch.zeros(1, global_c, 1, 1))
+    def forward(self, inps):
+        inp, global_inp = inps
         x = inp
+        g_x = global_inp
 
         x = self.norm1(x)
 
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.sg(x)
-        x = x * self.sca(x)
+        attn, x_g = self.grm(x, g_x)
+        x = x * attn
         x = self.conv3(x)
 
         x = self.dropout1(x)
@@ -154,15 +167,19 @@ class NAFBlock(nn.Module):
 
         x = self.dropout2(x)
 
-        return y + x * self.gamma
+        return (y + x * self.gamma, global_inp + x_g * self.delta)
 
 
 class NAFNet(nn.Module):
 
     def __init__(self, img_channel=3, width=16, middle_blk_num=1, enc_blk_nums=[], dec_blk_nums=[],
-                use_add = False):
+                use_add = False, global_channel=16):
         super().__init__()
-
+        self.global_channel = global_channel
+        self.global_channel_producer = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(width, global_channel, 1)
+        )
         self.intro = nn.Conv2d(in_channels=img_channel, out_channels=width, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)
         self.ending = nn.Conv2d(in_channels=width, out_channels=img_channel, kernel_size=3, padding=1, stride=1, groups=1,
@@ -179,7 +196,7 @@ class NAFNet(nn.Module):
         for num in enc_blk_nums:
             self.encoders.append(
                 nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
+                    *[NAFBlock(chan, global_channel) for _ in range(num)]
                 )
             )
             self.downs.append(
@@ -189,7 +206,7 @@ class NAFNet(nn.Module):
 
         self.middle_blks = \
             nn.Sequential(
-                *[NAFBlock(chan) for _ in range(middle_blk_num)]
+                *[NAFBlock(chan, global_channel) for _ in range(middle_blk_num)]
             )
 
         for num in dec_blk_nums:
@@ -202,7 +219,7 @@ class NAFNet(nn.Module):
             chan = chan // 2
             self.decoders.append(
                 nn.Sequential(
-                    *[NAFBlock(chan) for _ in range(num)]
+                    *[NAFBlock(chan, global_channel) for _ in range(num)]
                 )
             )
 
@@ -219,19 +236,21 @@ class NAFNet(nn.Module):
 
         x = self.intro(inp)
 
+        global_info = self.global_channel_producer(x)
+
         encs = []
 
         for encoder, down in zip(self.encoders, self.downs):
-            x = encoder(x)
+            x, global_info = encoder((x, global_info))
             encs.append(x)
             x = down(x)
 
-        x = self.middle_blks(x)
+        x, global_info = self.middle_blks((x, global_info))
 
         for decoder, up, merge, enc_skip in zip(self.decoders, self.ups, self.merges, encs[::-1]):
             x = up(x)
             x = merge(x, enc_skip)
-            x = decoder(x)
+            x, global_info = decoder((x, global_info))
 
         x = self.ending(x)
         x = x + inp
