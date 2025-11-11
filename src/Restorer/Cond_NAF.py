@@ -50,10 +50,12 @@ class SimpleGate(nn.Module):
 
 
 class ConditionedChannelAttention(nn.Module):
-    def __init__(self, dims, cat_dims):
+    def __init__(self, dims, cat_dims, out_dim=0):
         super().__init__()
         in_dim = dims + cat_dims
-        self.mlp = nn.Sequential(nn.Linear(in_dim, dims))
+        if not out_dim:
+            out_dim = dims
+        self.mlp = nn.Sequential(nn.Linear(in_dim, out_dim))
         self.pool = nn.AdaptiveAvgPool2d(1)
 
     def forward(self, x, conditioning):
@@ -95,7 +97,7 @@ class NKA(nn.Module):
 class CondFuser(nn.Module):
     def __init__(self, chan, cond_chan=1):
         super().__init__()
-        self.cca = ConditionedChannelAttention(chan * 2, cond_chan)
+        self.cca = ConditionedChannelAttention(chan * 2, cond_chan, out_dim=chan)
         self.sig = nn.Sigmoid()
 
         self.sa = nn.Sequential(
@@ -107,7 +109,7 @@ class CondFuser(nn.Module):
         
     def forward(self, x1, x2, cond):
         x = torch.cat([x1, x2], dim=1)
-        x2 = 1 * self.sig(self.cca(x)) * self.sa(x) * x2
+        x2 = 1 * self.sig(self.cca(x, cond)) * self.sa(x) * x2
         return x1 + x2
 
     
