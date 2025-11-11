@@ -64,17 +64,24 @@ class GlobalReasoningModule(nn.Module):
         self.conv1 = nn.Conv2d(in_channels=chans+global_chans, out_channels=chans+global_chans, kernel_size=1, padding=0, stride=1,
                       groups=1, bias=True)
         self.act = nn.GELU()
+        self.norm = nn.GroupNorm(1, chans+global_chans)
         self.conv2 = nn.Conv2d(in_channels=chans+global_chans, out_channels=chans+global_chans, kernel_size=1, padding=0, stride=1,
                       groups=1, bias=True)  
         self.split = [chans, global_chans]
+        self.delta = nn.Parameter(torch.zeros(1, global_chans, 1, 1))
+
 
     def forward(self, x, global_x):
+        inp = global_x
         x = self.pool(x)
         x = torch.cat([x, global_x], dim=1)
+        x = self.norm(x)
         x = self.conv1(x)
         x = self.act(x)
         x = self.conv2(x)
         x, global_x = torch.split(x, self.split, dim=-3)
+        global_x = inp + global_x * self.delta
+
         return x, global_x
 
 class CondFuser(nn.Module):
@@ -142,7 +149,6 @@ class NAFBlock(nn.Module):
 
         self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
         self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)), requires_grad=True)
-        self.delta = nn.Parameter(torch.zeros(1, global_c, 1, 1))
     def forward(self, inps):
         inp, global_inp = inps
         x = inp
@@ -167,23 +173,44 @@ class NAFBlock(nn.Module):
 
         x = self.dropout2(x)
 
-        return (y + x * self.gamma, global_inp + x_g * self.delta)
+        return (y + x * self.gamma, x_g)
 
 
 class NAFNet(nn.Module):
 
     def __init__(self, img_channel=3, width=16, middle_blk_num=1, enc_blk_nums=[], dec_blk_nums=[],
-                use_add = False, global_channel=16):
+                use_add = False, global_channel=128):
         super().__init__()
         self.global_channel = global_channel
-        self.global_channel_producer = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(width, global_channel, 1)
-        )
+ 
         self.intro = nn.Conv2d(in_channels=img_channel, out_channels=width, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)
         self.ending = nn.Conv2d(in_channels=width, out_channels=img_channel, kernel_size=3, padding=1, stride=1, groups=1,
                               bias=True)
+
+
+        self.global_channel_producer = nn.Sequential(
+            nn.Conv2d(img_channel, 16, 3, stride=2, padding=1),
+            nn.GroupNorm(1, 16),
+            nn.GELU(),
+
+            nn.Conv2d(16, 32, 3, stride=2, padding=1),
+            nn.GroupNorm(1, 32),
+            nn.GELU(),
+
+            nn.Conv2d(32, 64, 3, stride=2, padding=1),
+            nn.GroupNorm(1, 64),
+            nn.GELU(),
+
+            nn.Conv2d(64, 128, 3, stride=2, padding=1),
+            nn.GroupNorm(1, 128),
+            nn.GELU(),
+            
+            nn.AdaptiveAvgPool2d((8,8)),
+            nn.GroupNorm(1, 128),
+            nn.Flatten(),
+            nn.Linear(128 * 8 * 8, global_channel)
+        )
 
         self.encoders = nn.ModuleList()
         self.decoders = nn.ModuleList()
@@ -235,9 +262,8 @@ class NAFNet(nn.Module):
         inp = self.check_image_size(inp)
 
         x = self.intro(inp)
-
-        global_info = self.global_channel_producer(x)
-
+        global_info = self.global_channel_producer(inp)
+        global_info = global_info.view(1, -1, 1, 1)
         encs = []
 
         for encoder, down in zip(self.encoders, self.downs):
