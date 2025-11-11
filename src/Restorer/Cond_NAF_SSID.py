@@ -15,7 +15,6 @@ Simple Baselines for Image Restoration
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class LayerNorm2dAdjusted(nn.Module):
     def __init__(self, channels, eps=1e-6):
@@ -23,18 +22,18 @@ class LayerNorm2dAdjusted(nn.Module):
         self.register_parameter("weight", nn.Parameter(torch.ones(channels)))
         self.register_parameter("bias", nn.Parameter(torch.zeros(channels)))
         self.eps = eps
-        
+
     def forward(self, x, target_mu, target_var):
         mu = x.mean(1, keepdim=True)
         var = (x - mu).pow(2).mean(1, keepdim=True)
-        
+
         y = (x - mu) / torch.sqrt(var + self.eps)
 
         y = y * torch.sqrt(target_var + self.eps) + target_mu
-        
+
         weight_view = self.weight.view(1, self.weight.size(0), 1, 1)
         bias_view = self.bias.view(1, self.bias.size(0), 1, 1)
-        
+
         y = weight_view * y + bias_view
         return y
 
@@ -44,16 +43,16 @@ class LayerNorm2d(nn.Module):
         self.register_parameter("weight", nn.Parameter(torch.ones(channels)))
         self.register_parameter("bias", nn.Parameter(torch.zeros(channels)))
         self.eps = eps
-        
+
     def forward(self, x):
         mu = x.mean(1, keepdim=True)
         var = (x - mu).pow(2).mean(1, keepdim=True)
-        
+
         y = (x - mu) / torch.sqrt(var + self.eps)
-        
+
         weight_view = self.weight.view(1, self.weight.size(0), 1, 1)
         bias_view = self.bias.view(1, self.bias.size(0), 1, 1)
-        
+
         y = weight_view * y + bias_view
         return y
 
@@ -72,13 +71,22 @@ class ChannelAttention(nn.Module):
 class CondFuser(nn.Module):
     def __init__(self, chan):
         super().__init__()
-        self.cca = ChannelAttention(chan * 2)
-
+        self.sa = nn.Sequential(
+            nn.Conv2d(in_channels = 2 * chan, out_channels=chan, kernel_size=3, 
+                      padding=1, stride=1,
+                      groups=1, bias=True),
+            nn.Sigmoid()
+        )
+        self.ca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_channels=2 * chan, out_channels=chan, kernel_size=1, padding=0, stride=1,
+                      groups=1, bias=True),
+            nn.Sigmoid()
+        )
+        
     def forward(self, x1, x2):
         x = torch.cat([x1, x2], dim=1)
-        x = self.cca(x) * x
-
-        x1, x2 = x.chunk(2, dim=1)
+        x2 = 1 * self.ca(x) * self.sa(x) * x2
         return x1 + x2
 
 class CondFuserAdd(nn.Module):
@@ -101,7 +109,7 @@ class NAFBlock(nn.Module):
         self.conv2 = nn.Conv2d(in_channels=dw_channel, out_channels=dw_channel, kernel_size=3, padding=1, stride=1, groups=dw_channel,
                                bias=True)
         self.conv3 = nn.Conv2d(in_channels=dw_channel // 2, out_channels=c, kernel_size=1, padding=0, stride=1, groups=1, bias=True)
-        
+
         # Simplified Channel Attention
         self.sca = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
@@ -234,45 +242,5 @@ class NAFNet(nn.Module):
         _, _, h, w = x.size()
         mod_pad_h = (self.padder_size - h % self.padder_size) % self.padder_size
         mod_pad_w = (self.padder_size - w % self.padder_size) % self.padder_size
-        x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h))
+        x = tF.pad(x, (0, mod_pad_w, 0, mod_pad_h))
         return x
-
-class NAFNetLocal(Local_Base, NAFNet):
-    def __init__(self, *args, train_size=(1, 3, 256, 256), fast_imp=False, **kwargs):
-        Local_Base.__init__(self)
-        NAFNet.__init__(self, *args, **kwargs)
-
-        N, C, H, W = train_size
-        base_size = (int(H * 1.5), int(W * 1.5))
-
-        self.eval()
-        with torch.no_grad():
-            self.convert(base_size=base_size, train_size=train_size, fast_imp=fast_imp)
-
-
-if __name__ == '__main__':
-    img_channel = 3
-    width = 32
-
-    # enc_blks = [2, 2, 4, 8]
-    # middle_blk_num = 12
-    # dec_blks = [2, 2, 2, 2]
-
-    enc_blks = [1, 1, 1, 28]
-    middle_blk_num = 1
-    dec_blks = [1, 1, 1, 1]
-    
-    net = NAFNet(img_channel=img_channel, width=width, middle_blk_num=middle_blk_num,
-                      enc_blk_nums=enc_blks, dec_blk_nums=dec_blks)
-
-
-    inp_shape = (3, 256, 256)
-
-    from ptflops import get_model_complexity_info
-
-    macs, params = get_model_complexity_info(net, inp_shape, verbose=False, print_per_layer_stat=False)
-
-    params = float(params[:-3])
-    macs = float(macs[:-4])
-
-    print(macs, params)
