@@ -25,7 +25,7 @@ experiment: NAF_test
 mlflow_experiment: NAFNet_variations
 
 # --- Run Configuration ---:
-run_name: NAF_debayer_in
+run_name: NAF_debayer_in_add_connections
 run_path: NAF_deep_test_align
 model_params:
   # chans: [64, 128, 256, 512, 512, 512]
@@ -39,7 +39,7 @@ model_params:
   out_channels: 3
   rggb: False
   use_CondFuserV2: False
-  use_add: False
+  use_add: True
   use_CondFuserV3: False
   use_attnblock: False
   use_CondFuserV4: False
