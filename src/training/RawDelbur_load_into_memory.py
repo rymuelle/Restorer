@@ -84,7 +84,7 @@ class RawDatasetDNGDeblur(Dataset):
         aligned = gt_expanded.transpose(1, 2, 0)[self.buffer:-self.buffer, self.buffer:-self.buffer]
 
         debayered = torch.tensor(aligned).permute(2, 0, 1).unsqueeze(0).float()
-        rand_n = np.random.randint(0, 300)
+        rand_n = np.random.randint(*self.blur_range)
         kernel, kernel_shape = random_walk_kernel(rand_n)
         blurred = torch.nn.functional.conv2d(debayered, kernel, stride=1, padding=kernel_shape[0]//2, groups=3)
 
