@@ -2,6 +2,83 @@ import numpy as np
 from PIL import Image
 from scipy.ndimage import convolve
 
+
+import torch
+
+def simulate_sparse_torch(image: torch.Tensor, pattern: str = "RGGB", cfa_type: str = "bayer") -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Simulate a sparse CFA (Color Filter Array) from an RGB image using PyTorch.
+
+    Args:
+        image: torch.Tensor (3, H, W), RGB image.
+        pattern: CFA pattern string, one of {"RGGB","BGGR","GRBG","GBRG"} for Bayer,
+                 or ignored if cfa_type="xtrans".
+        cfa_type: "bayer" or "xtrans".
+
+    Returns:
+        cfa: torch.Tensor (r, H, W), sparse CFA image.
+        sparse_mask:  torch.Tensor (r, H, W), mask of pixels.
+    """
+    # Ensure input image is a torch.Tensor
+    if not isinstance(image, torch.Tensor):
+        raise TypeError("Input 'image' must be a torch.Tensor.")
+        
+    C, H, W = image.shape
+    
+    # Initialize output tensors on the same device and dtype as the input
+    cfa = torch.zeros_like(image)
+    sparse_mask = torch.zeros_like(image, dtype=image.dtype)
+    
+    # Map 'R', 'G', 'B' to channel indices 0, 1, 2
+    cmap = {"R": 0, "G": 1, "B": 2}
+
+    if cfa_type == "bayer":
+        # 2x2 Bayer pattern masks 
+        masks = {
+            "RGGB": [["R", "G"], ["G", "B"]],
+            "BGGR": [["B", "G"], ["G", "R"]],
+            "GRBG": [["G", "R"], ["B", "G"]],
+            "GBRG": [["G", "B"], ["R", "G"]],
+        }
+        
+        if pattern not in masks:
+            raise ValueError(f"Unknown Bayer pattern: {pattern}. Must be one of {list(masks.keys())}")
+
+        mask = masks[pattern]
+         
+        for i in range(2):
+            for j in range(2):
+                ch = cmap[mask[i][j]]
+                # PyTorch slicing: [channel_index, start:end:step, start:end:step]
+                cfa[ch, i::2, j::2] = image[ch, i::2, j::2]
+                sparse_mask[ch, i::2, j::2] = 1
+                
+    elif cfa_type == "xtrans":
+        # Fuji X-Trans 6x6 repeating pattern
+        xtrans_pattern = [
+            ["G","B","R","G","R","B"],
+            ["R","G","G","B","G","G"],
+            ["B","G","G","R","G","G"],
+            ["G","R","B","G","B","R"],
+            ["B","G","G","R","G","G"],
+            ["R","G","G","B","G","G"],
+        ]
+        
+        step = 6
+
+        for i in range(step):
+            for j in range(step):
+                ch = cmap[xtrans_pattern[i][j]]
+                # PyTorch slicing: [channel_index, start:end:step, start:end:step]
+                cfa[ch, i::step, j::step] = image[ch, i::step, j::step]
+                sparse_mask[ch, i::step, j::step] = 1 # X-Trans mask also uses step=6
+                
+    else:
+        raise ValueError(f"Unknown CFA type: {cfa_type}. Must be 'bayer' or 'xtrans'")
+
+    return cfa, sparse_mask
+
+
 def simulate_sparse(image, pattern="RGGB", cfa_type="bayer"):
     """
     Simulate a sparse CFA (Color Filter Array) from an RGB image.
