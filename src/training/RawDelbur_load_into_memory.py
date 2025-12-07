@@ -211,11 +211,11 @@ def random_walk_kernel(n=100, scale=1, std_scale=1, min_val=1e-3, num_bins=101):
     kernel = torch.tensor(kernel).unsqueeze(0).expand(3,*kernel_shape).unsqueeze(1).float()
     return kernel
 
-def kinematic_kernel(n=100, vel_scale=1e-1, accel_scale=1e-3, num_bins=41, std_scale=.6):
+def kinematic_kernel(n=100, vel_scale=1e-1, accel_scale=1e-3, num_bins=31, internal_kernel=101, std_scale=.6):
     
     covariance = np.array([[1, 0], [0, 1]])
-    kernel = np.zeros([num_bins, num_bins])
-    ax = np.linspace(-(num_bins-1)/2, (num_bins-1)/2, num_bins)
+    kernel = np.zeros([internal_kernel, internal_kernel])
+    ax = np.linspace(-(internal_kernel-1)/2, (internal_kernel-1)/2, internal_kernel)
     xs, ys = np.meshgrid(ax, ax)
     points = np.stack((xs, ys), axis=-1)
     x, y = 0, 0
@@ -244,10 +244,10 @@ def kinematic_kernel(n=100, vel_scale=1e-1, accel_scale=1e-3, num_bins=41, std_s
     except:
         print("failed roll", x_com, y_com, kernel.shape)
 
-    # Compute center of mass
-    x_com = (kernel.sum(axis=1) * ax).sum()/(kernel.sum()+1e-6)
-    y_com = (kernel.sum(axis=0) * ax).sum()/(kernel.sum()+1e-6)
-
+    # Crop
+    delta = internal_kernel-num_bins
+    buffer = int(delta//2)
+    kernel = kernel[buffer:-buffer, buffer:-buffer]
 
     # Normalize
     kernel = kernel/(kernel.sum())
