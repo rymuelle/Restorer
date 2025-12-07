@@ -19,13 +19,14 @@ from RawHandler.RawHandler import RawHandler
 # from .align_images import apply_alignment
 
 class RawDatasetDNGDeblur(Dataset):
-    def __init__(self, path, csv, colorspace, crop_size=180, buffer=10, 
-                 validation=False, run_align=False, 
-                 dimensions=2000, 
+    def __init__(self, path, csv, colorspace, crop_size=180, buffer=10,
+                 validation=False, run_align=False,
+                 dimensions=2000,
                  apply_exposure_corr=True,
                  demosaicing_func = demosaicing_CFA_Bayer_Malvar2004,
                  blur_range=[0,300],
                  blur_buffer=30,
+                 device='cuda'
                  ):
         super().__init__()
         self.df = pd.read_csv(csv)
@@ -42,6 +43,7 @@ class RawDatasetDNGDeblur(Dataset):
         self.demosaicing_func = demosaicing_func
         self.blur_range = blur_range
         self.blur_buffer = blur_buffer
+        self.device = device
 
         files = os.listdir(path)
         files = [f for f in files if 'dng' in f]
@@ -49,7 +51,7 @@ class RawDatasetDNGDeblur(Dataset):
         self.rhs = {}
         for file in files:
           self.rhs[file] = RawHandler(f'Cropped_Raw/{file}')
-        
+
 
     def __len__(self):
         return len(self.df)
@@ -66,12 +68,8 @@ class RawDatasetDNGDeblur(Dataset):
         gt_rh = self.rhs[gt_name]
         # gt_rh = list(self.rhs.items())[idx][1]
 
-        dims = random_crop_dim(gt_rh.raw.shape, self.crop_size, self.buffer, validation=self.validation)
+        dims = random_crop_dim(gt_rh.raw.shape, self.crop_size+self.blur_buffer, self.buffer, validation=self.validation)
 
-        # bayer_data = gt_rh.apply_colorspace_transform(dims=dims, colorspace=self.colorspace)
-        # noisy = noisy_rh.as_rgb(dims=dims, colorspace=self.colorspace, demosaicing_func=self.demosaicing_func, clip=False)
-        # rggb = noisy_rh.as_rggb(dims=dims, colorspace=self.colorspace, clip=False)
-        # sparse = noisy_rh.as_sparse(dims=dims, colorspace=self.colorspace, clip=False)
 
         # check_align_matrix(row)
         expanded_dims = [dims[0]-self.buffer, dims[1]+self.buffer, dims[2]-self.buffer, dims[3]+self.buffer]
@@ -84,23 +82,15 @@ class RawDatasetDNGDeblur(Dataset):
         aligned = gt_expanded.transpose(1, 2, 0)[self.buffer:-self.buffer, self.buffer:-self.buffer]
 
         debayered = torch.tensor(aligned).permute(2, 0, 1).unsqueeze(0).float()
-        rand_n = np.random.randint(*self.blur_range)
-        kernel, kernel_shape = random_walk_kernel(rand_n)
-        blurred = torch.nn.functional.conv2d(debayered, kernel, stride=1, padding=kernel_shape[0]//2, groups=3)
 
         # Crop out edges
-        blurred = blurred[:, :, self.blur_buffer:-self.blur_buffer, self.blur_buffer:-self.blur_buffer]
-        debayered = debayered[:, :, self.blur_buffer:-self.blur_buffer, self.blur_buffer:-self.blur_buffer]
+        debayered = debayered[:, :, self.blur_buffer:-self.blur_buffer, self.blur_buffer:-self.blur_buffer][0]
 
         # Convert to tensors
         output = {
-            "aligned": torch.tensor(aligned).to(float).permute(2, 0, 1).clip(0,1),
-            "noisy": torch.tensor(blurred).to(float).clip(0,1)[0],
-            # "conditioning": torch.tensor([row.iso/self.coordinate_iso]).to(float),
-            "kernel": kernel,
-            # "gt_raw": gt_raw,
-            # "noise_est": noise_est,
-            # "rggb_gt": rggb_gt,
+            "aligned": debayered.to(float).clip(0,1),
+            "noisy": debayered.to(float).clip(0,1),
+            "conditioning": torch.tensor([row.iso/self.coordinate_iso]).to(float),
         }
         return output
 
@@ -163,7 +153,7 @@ def round_to_nearest_2(number):
 
 from scipy.stats import multivariate_normal
 
-def random_walk_kernel(n, scale=1, std_scale=1, min_val=1e-3, num_bins=101):
+def random_walk_kernel(n=100, scale=1, std_scale=1, min_val=1e-3, num_bins=101):
     
     covariance = np.array([[1, 0], [0, 1]])
     kernel = np.zeros([num_bins, num_bins])
@@ -219,4 +209,76 @@ def random_walk_kernel(n, scale=1, std_scale=1, min_val=1e-3, num_bins=101):
     # Convert to weights for conv2d
     kernel_shape = kernel.shape
     kernel = torch.tensor(kernel).unsqueeze(0).expand(3,*kernel_shape).unsqueeze(1).float()
-    return kernel, kernel_shape
+    return kernel
+
+def kinematic_kernel(n=100, vel_scale=1e-1, accel_scale=1e-3, num_bins=41, std_scale=.6):
+    
+    covariance = np.array([[1, 0], [0, 1]])
+    kernel = np.zeros([num_bins, num_bins])
+    ax = np.linspace(-(num_bins-1)/2, (num_bins-1)/2, num_bins)
+    xs, ys = np.meshgrid(ax, ax)
+    points = np.stack((xs, ys), axis=-1)
+    x, y = 0, 0
+    vx, vy =  np.random.normal()*vel_scale,  np.random.normal()*vel_scale
+    accx, accy =  np.random.normal()*accel_scale, np.random.normal()*accel_scale
+    x_list = [(x, y)]
+    for _ in range(n):
+        x += vx
+        y += vy
+        vx += accx
+        vy += accy
+        mean = np.array([x, y]) 
+        x_list.append((x,y))
+        pdf = multivariate_normal.pdf(points/std_scale, mean=mean, cov=covariance)
+        kernel += pdf
+
+
+    # Compute center of mass
+    x_com = (kernel.sum(axis=1) * ax).sum()/(kernel.sum()+1e-6)
+    y_com = (kernel.sum(axis=0) * ax).sum()/(kernel.sum()+1e-6)
+
+    try:
+        # Roll by center of mass
+        kernel = np.roll(kernel, -round(x_com), axis=0 )
+        kernel = np.roll(kernel, -round(y_com), axis=1 )
+    except:
+        print("failed roll", x_com, y_com, kernel.shape)
+
+    # Compute center of mass
+    x_com = (kernel.sum(axis=1) * ax).sum()/(kernel.sum()+1e-6)
+    y_com = (kernel.sum(axis=0) * ax).sum()/(kernel.sum()+1e-6)
+
+
+    # Normalize
+    kernel = kernel/(kernel.sum())
+    # Convert to weights for conv2d
+    kernel_shape = kernel.shape
+    kernel = torch.tensor(kernel).unsqueeze(0).expand(3,*kernel_shape).unsqueeze(1).float()
+    return kernel
+
+
+def batched_conv(input, kernel):
+  B, C, H, W = input.shape
+  with torch.no_grad():
+      input_reshaped = input.view(1, B * C, H, W)
+
+      padding = kernel.shape[-1] // 2
+
+      kernel = kernel.view(B * C, kernel.shape[-3], kernel.shape[-2], kernel.shape[-1])
+      blurred_reshaped = torch.nn.functional.conv2d(
+          input_reshaped,
+          kernel,
+          stride=1,
+          padding=padding,
+          groups=B * C
+      )
+
+      blurred_batch = blurred_reshaped.view(B, C, H, W)
+      return blurred_batch
+  
+
+def make_kernel_batch(batch_size, kernel_func=kinematic_kernel, kwargs={}):
+    kernels = []
+    for i in range(batch_size):
+        kernels.append(kernel_func(**kwargs))
+    return torch.stack(kernels, axis=0)
