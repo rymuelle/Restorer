@@ -181,29 +181,60 @@ def random_walk_kernel(n=100, scale=1, std_scale=1, min_val=1e-3, num_bins=101):
     except:
         print("failed roll", x_com, y_com, kernel.shape)
 
-    # Compute center of mass
-    x_com = (kernel.sum(axis=1) * ax).sum()/(kernel.sum()+1e-6)
-    y_com = (kernel.sum(axis=0) * ax).sum()/(kernel.sum()+1e-6)
+    # # Compute center of mass
+    # x_com = (kernel.sum(axis=1) * ax).sum()/(kernel.sum()+1e-6)
+    # y_com = (kernel.sum(axis=0) * ax).sum()/(kernel.sum()+1e-6)
 
-    # Crop
-    x = kernel.sum(axis=0)
-    filled_x = np.where(x>min_val)
-    x_range = (filled_x[0][0], filled_x[0][-1])
-    if x_range[1] > num_bins - x_range[0]:
-        x_cut = num_bins - x_range[1]
-    else:
-        x_cut = x_range[0]
+    # # Crop
+    # x = kernel.sum(axis=0)
+    # filled_x = np.where(x>min_val)
+    # x_range = (filled_x[0][0], filled_x[0][-1])
+    # if x_range[1] > num_bins - x_range[0]:
+    #     x_cut = num_bins - x_range[1]
+    # else:
+    #     x_cut = x_range[0]
     
-    y = kernel.sum(axis=1)
-    filled_y = np.where(y>min_val)
-    y_range = (filled_y[0][0], filled_y[0][-1])
-    if y_range[1] > num_bins - y_range[0]:
-        y_cut = num_bins - y_range[1]
-    else:
-        y_cut = y_range[0]
-    cut = min(x_cut, y_cut)
-    kernel = kernel[cut:-cut, cut:-cut]
+    # y = kernel.sum(axis=1)
+    # filled_y = np.where(y>min_val)
+    # y_range = (filled_y[0][0], filled_y[0][-1])
+    # if y_range[1] > num_bins - y_range[0]:
+    #     y_cut = num_bins - y_range[1]
+    # else:
+    #     y_cut = y_range[0]
+    # cut = min(x_cut, y_cut)
+    # kernel = kernel[cut:-cut, cut:-cut]
 
+    # Normalize
+    kernel = kernel/(kernel.sum())
+    # Convert to weights for conv2d
+    kernel_shape = kernel.shape
+    kernel = torch.tensor(kernel).unsqueeze(0).expand(3,*kernel_shape).unsqueeze(1).float()
+    return kernel
+
+def gaussian_kernel(gauss_min = 1e-3, gauss_Scale=10,  num_bins=31):
+    kernel = np.zeros([num_bins, num_bins])
+    ax = np.linspace(-(num_bins-1)/2, (num_bins-1)/2, num_bins)
+    xs, ys = np.meshgrid(ax, ax)
+    points = np.stack((xs, ys), axis=-1)
+
+    
+    mean = np.array([0, 0])
+    covariance = np.array([[1, 0], [0, 1]])
+
+    num_pixels = gauss_Scale * np.random.rand() + gauss_min
+    kernel += multivariate_normal.pdf(points/num_pixels, mean=mean, cov=covariance)
+
+    # Normalize
+    kernel = kernel/(kernel.sum())
+    # Convert to weights for conv2d
+    kernel_shape = kernel.shape
+    kernel = torch.tensor(kernel).unsqueeze(0).expand(3,*kernel_shape).unsqueeze(1).float()
+    return kernel, torch.tensor(num_pixels).unsqueeze(0)
+
+
+def gaussian_kernel_smear(n=3, min_gauss=1, max_gauss=2, scale=1,  num_bins=31):
+    gauss_scale = max_gauss*np.random.rand()+min_gauss
+    kernel =  random_walk_kernel(n=n, scale=scale, std_scale=gauss_scale, min_val=1e-3, num_bins=num_bins)
     # Normalize
     kernel = kernel/(kernel.sum())
     # Convert to weights for conv2d
@@ -282,3 +313,13 @@ def make_kernel_batch(batch_size, kernel_func=kinematic_kernel, kwargs={}):
     for i in range(batch_size):
         kernels.append(kernel_func(**kwargs))
     return torch.stack(kernels, axis=0)
+
+
+def make_kernel_batch_conditioning(batch_size, kernel_func=kinematic_kernel, kwargs={}):
+    kernels = []
+    conditioning = []
+    for i in range(batch_size):
+        k, c = kernel_func(**kwargs)
+        kernels.append(k)
+        conditioning.append(c)
+    return torch.stack(kernels, axis=0), torch.stack(conditioning, axis=0)
