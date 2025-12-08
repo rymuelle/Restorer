@@ -59,9 +59,9 @@ class RawDatasetDNGDeblur(Dataset):
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         # Load images
-        # name = Path(f"{row.bayer_path}").name
-        # name = name.replace('_bayer.jpg', '.dng')
-        # noisy_rh = self.rhs[name]
+        name = Path(f"{row.bayer_path}").name
+        name = name.replace('_bayer.jpg', '.dng')
+        noisy_rh = self.rhs[name]
 
         gt_name =  Path(f"{row.gt_path}").name
         gt_name = gt_name.replace('.jpg', '.dng')
@@ -74,22 +74,27 @@ class RawDatasetDNGDeblur(Dataset):
         # check_align_matrix(row)
         expanded_dims = [dims[0]-self.buffer, dims[1]+self.buffer, dims[2]-self.buffer, dims[3]+self.buffer]
         gt_expanded = gt_rh.as_rgb(dims=expanded_dims, colorspace=self.colorspace, demosaicing_func=self.demosaicing_func, clip=False)
+        noisy_expanded = noisy_rh.as_rgb(dims=expanded_dims, colorspace=self.colorspace, demosaicing_func=self.demosaicing_func, clip=False)
+
         # if self.apply_exposure_corr:
         #     gt_expanded[0] *= row['r_scale_factor']
         #     gt_expanded[1] *= row['g_scale_factor']
         #     gt_expanded[2] *= row['b_scale_factor']
         # aligned = apply_alignment(gt_expanded.transpose(1, 2, 0), row.to_dict())[self.buffer:-self.buffer, self.buffer:-self.buffer]
         aligned = gt_expanded.transpose(1, 2, 0)[self.buffer:-self.buffer, self.buffer:-self.buffer]
+        noisy = noisy_expanded.transpose(1, 2, 0)[self.buffer:-self.buffer, self.buffer:-self.buffer]\
+        
+        aligned = torch.tensor(aligned).permute(2, 0, 1).unsqueeze(0).float()
+        noisy = torch.tensor(noisy).permute(2, 0, 1).unsqueeze(0).float()
 
-        debayered = torch.tensor(aligned).permute(2, 0, 1).unsqueeze(0).float()
 
         # Crop out edges
-        debayered = debayered[:, :, self.blur_buffer:-self.blur_buffer, self.blur_buffer:-self.blur_buffer][0]
+        # debayered = debayered[:, :, self.blur_buffer:-self.blur_buffer, self.blur_buffer:-self.blur_buffer][0]
 
         # Convert to tensors
         output = {
-            "aligned": debayered.to(float).clip(0,1),
-            "noisy": debayered.to(float).clip(0,1),
+            "aligned": aligned.to(float).clip(0,1),
+            "noisy": noisy.to(float).clip(0,1),
             "conditioning": torch.tensor([row.iso/self.coordinate_iso]).to(float),
         }
         return output
@@ -153,11 +158,11 @@ def round_to_nearest_2(number):
 
 from scipy.stats import multivariate_normal
 
-def random_walk_kernel(n=100, scale=1, std_scale=1, min_val=1e-3, num_bins=101):
-    
+def random_walk_kernel(n=100, scale=1, std_scale=1, min_val=1e-3, internal_kernel=101, num_bins=31):
+    n = np.random.randint(0, n)
     covariance = np.array([[1, 0], [0, 1]])
-    kernel = np.zeros([num_bins, num_bins])
-    ax = np.linspace(-(num_bins-1)/2, (num_bins-1)/2, num_bins)
+    kernel = np.zeros([internal_kernel, internal_kernel])
+    ax = np.linspace(-(internal_kernel-1)/2, (internal_kernel-1)/2, internal_kernel)
     xs, ys = np.meshgrid(ax, ax)
     points = np.stack((xs, ys), axis=-1)
     x, y = 0, 0
@@ -181,28 +186,10 @@ def random_walk_kernel(n=100, scale=1, std_scale=1, min_val=1e-3, num_bins=101):
     except:
         print("failed roll", x_com, y_com, kernel.shape)
 
-    # # Compute center of mass
-    # x_com = (kernel.sum(axis=1) * ax).sum()/(kernel.sum()+1e-6)
-    # y_com = (kernel.sum(axis=0) * ax).sum()/(kernel.sum()+1e-6)
-
-    # # Crop
-    # x = kernel.sum(axis=0)
-    # filled_x = np.where(x>min_val)
-    # x_range = (filled_x[0][0], filled_x[0][-1])
-    # if x_range[1] > num_bins - x_range[0]:
-    #     x_cut = num_bins - x_range[1]
-    # else:
-    #     x_cut = x_range[0]
-    
-    # y = kernel.sum(axis=1)
-    # filled_y = np.where(y>min_val)
-    # y_range = (filled_y[0][0], filled_y[0][-1])
-    # if y_range[1] > num_bins - y_range[0]:
-    #     y_cut = num_bins - y_range[1]
-    # else:
-    #     y_cut = y_range[0]
-    # cut = min(x_cut, y_cut)
-    # kernel = kernel[cut:-cut, cut:-cut]
+    # Crop
+    delta = internal_kernel-num_bins
+    buffer = int(delta//2)
+    kernel = kernel[buffer:-buffer, buffer:-buffer]
 
     # Normalize
     kernel = kernel/(kernel.sum())
