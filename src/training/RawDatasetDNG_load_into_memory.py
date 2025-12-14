@@ -15,6 +15,7 @@ import torch
 # from src.training.align_images import apply_alignment, align_clean_to_noisy
 from pathlib import Path
 from RawHandler.RawHandler import RawHandler
+from RawHandler.utils import pixel_unshuffle
 
 from .align_images import apply_alignment
 
@@ -23,9 +24,10 @@ class RawDatasetDNG(Dataset):
                  validation=False, run_align=False, 
                  dimensions=2000, 
                  apply_exposure_corr=True,
-                 demosaicing_func = demosaicing_CFA_Bayer_Malvar2004):
+                 demosaicing_func = demosaicing_CFA_Bayer_Malvar2004,
+                 max_iso=1600):
         super().__init__()
-        self.df = pd.read_csv(csv)
+        self._df = pd.read_csv(csv)
         self.path = path
         self.crop_size = crop_size
         self.buffer = buffer
@@ -37,7 +39,8 @@ class RawDatasetDNG(Dataset):
         self.colorspace = colorspace
         self.apply_exposure_corr = apply_exposure_corr
         self.demosaicing_func = demosaicing_func
-
+        self.max_iso = max_iso
+        self.df = self.set_max_iso(max_iso)
         files = os.listdir(path)
         files = [f for f in files if 'dng' in f]
         files = [f for f in files if not 'xmp' in f]
@@ -46,7 +49,13 @@ class RawDatasetDNG(Dataset):
           self.rhs[file] = RawHandler(f'Cropped_Raw/{file}')
 
 
+    def set_max_iso(self, max_iso):
+        tdf = self._df[self._df.iso < max_iso].copy()
+        tdf.reset_index(drop=True, inplace=True)
+        self.df = tdf
+
     def __len__(self):
+        tdf = self.df
         return len(self.df)
 
     def __getitem__(self, idx):
@@ -85,6 +94,12 @@ class RawDatasetDNG(Dataset):
         # gt_raw = gt_rh.raw[dims[0]+shift_y:dims[1]+shift_y, dims[2]+shift_x:dims[3]+shift_x]
         # aligned = gt_rh.as_rgb(dims=dims, colorspace=self.colorspace).transpose(1, 2, 0)
 
+
+        # Aligned rggb
+        aligned_bayer = mosaicing_CFA_Bayer(aligned)
+        aligned_bayer = np.expand_dims(aligned_bayer, axis=0)
+        aligned_rggb = pixel_unshuffle(aligned_bayer, 2)
+
         # Convert to tensors
         output = {
             "bayer": torch.tensor(bayer_data).to(float).clip(0,1),
@@ -93,6 +108,8 @@ class RawDatasetDNG(Dataset):
             "sparse": torch.tensor(sparse).to(float).clip(0,1),
             "noisy": torch.tensor(noisy).to(float).clip(0,1),
             "rggb": torch.tensor(rggb).to(float).clip(0,1),
+            "aligned_rggb": torch.tensor(aligned_rggb).to(float).clip(0,1),
+            "aligned_bayer": torch.tensor(aligned_bayer).to(float).clip(0,1),
             "conditioning": torch.tensor([row.iso/self.coordinate_iso]).to(float),
             # "noisy_raw": noisy_raw,
             # "gt_raw": gt_raw,
