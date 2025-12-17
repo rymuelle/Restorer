@@ -18,6 +18,7 @@ from RawHandler.RawHandler import RawHandler
 from RawHandler.utils import pixel_unshuffle
 
 from .align_images import apply_alignment
+from src.training.align_images import apply_alignment, align_clean_to_noisy
 
 class RawDatasetDNG(Dataset):
     def __init__(self, path, csv, colorspace, crop_size=180, buffer=10, 
@@ -25,7 +26,8 @@ class RawDatasetDNG(Dataset):
                  dimensions=2000, 
                  apply_exposure_corr=True,
                  demosaicing_func = demosaicing_CFA_Bayer_Malvar2004,
-                 max_iso=1600):
+                 max_iso=1600,
+                 load_into_memory=False):
         super().__init__()
         self._df = pd.read_csv(csv)
         self.path = path
@@ -40,13 +42,13 @@ class RawDatasetDNG(Dataset):
         self.apply_exposure_corr = apply_exposure_corr
         self.demosaicing_func = demosaicing_func
         self.max_iso = max_iso
-        self.df = self.set_max_iso(max_iso)
+        self.set_max_iso(max_iso)
+
+        self.load_into_memory = load_into_memory
         files = os.listdir(path)
         files = [f for f in files if 'dng' in f]
         files = [f for f in files if not 'xmp' in f]
         self.rhs = {}
-        for file in files:
-          self.rhs[file] = RawHandler(f'Cropped_Raw/{file}')
 
 
     def set_max_iso(self, max_iso):
@@ -58,16 +60,24 @@ class RawDatasetDNG(Dataset):
         tdf = self.df
         return len(self.df)
 
+    def _load_raw(self, file):
+        if self.load_into_memory:
+            if not file in self.rhs:
+                self.rhs[file] = RawHandler(file)
+            return self.rhs[file]
+        else:
+            return RawHandler(file)
+    
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
         # Load images
-        name = Path(f"{row.bayer_path}").name
-        name = name.replace('_bayer.jpg', '.dng')
-        noisy_rh = self.rhs[name]
+        name =  Path(f"{row.bayer_path}").name
+        name = str(self.path / name.replace('_bayer.jpg', '.dng'))
+        noisy_rh = self._load_raw(name)
 
         gt_name =  Path(f"{row.gt_path}").name
-        gt_name = gt_name.replace('.jpg', '.dng')
-        gt_rh = self.rhs[gt_name]
+        gt_name = str(self.path / gt_name.replace('.jpg', '.dng'))
+        gt_rh =  self._load_raw(gt_name)
 
         dims = random_crop_dim(noisy_rh.raw.shape, self.crop_size, self.buffer, validation=self.validation)
 
@@ -95,10 +105,6 @@ class RawDatasetDNG(Dataset):
         # aligned = gt_rh.as_rgb(dims=dims, colorspace=self.colorspace).transpose(1, 2, 0)
 
 
-        # Aligned rggb
-        aligned_bayer = mosaicing_CFA_Bayer(aligned)
-        aligned_bayer = np.expand_dims(aligned_bayer, axis=0)
-        aligned_rggb = pixel_unshuffle(aligned_bayer, 2)
 
         # Convert to tensors
         output = {
@@ -108,8 +114,6 @@ class RawDatasetDNG(Dataset):
             "sparse": torch.tensor(sparse).to(float).clip(0,1),
             "noisy": torch.tensor(noisy).to(float).clip(0,1),
             "rggb": torch.tensor(rggb).to(float).clip(0,1),
-            "aligned_rggb": torch.tensor(aligned_rggb).to(float).clip(0,1),
-            "aligned_bayer": torch.tensor(aligned_bayer).to(float).clip(0,1),
             "conditioning": torch.tensor([row.iso/self.coordinate_iso]).to(float),
             # "noisy_raw": noisy_raw,
             # "gt_raw": gt_raw,
