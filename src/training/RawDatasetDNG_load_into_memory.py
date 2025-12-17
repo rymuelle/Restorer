@@ -18,7 +18,6 @@ from RawHandler.RawHandler import RawHandler
 from RawHandler.utils import pixel_unshuffle
 
 from .align_images import apply_alignment
-from src.training.align_images import apply_alignment, align_clean_to_noisy
 
 class RawDatasetDNG(Dataset):
     def __init__(self, path, csv, colorspace, crop_size=180, buffer=10, 
