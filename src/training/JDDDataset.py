@@ -135,11 +135,11 @@ class JDDDataset(Dataset):
             "ccm": torch.from_numpy(deg_ccm).to(torch.float32)
         }
 
-        compute_mono_noise = False
+        compute_mono_noise = True
         if compute_mono_noise:
             mono_noise = (output['deg'][:3] - (output['aligned'] * output['deg'][3:])).sum(axis=0, keepdim=True)
             output['mono_noise'] = mono_noise
             cfa_gt = (output['aligned'] * output['deg'][3:]).sum(axis=0, keepdim=True)
-            mono_noise_proportion = output['mono_noise']/cfa_gt
+            mono_noise_proportion = output['mono_noise']/(cfa_gt+1e-6)
             output['mono_noise_proportion'] =  mono_noise_proportion
         return output
