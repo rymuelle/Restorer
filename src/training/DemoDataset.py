@@ -71,13 +71,14 @@ def get_mask(pattern, mask):
     return 0
 
 class DemoDataset(Dataset):
-    def __init__(self, csv, crop_size=256, buffer=10, validation=False):
+    def __init__(self, csv, crop_size=256, buffer=10, validation=False, resize=1):
         super().__init__()
         self.csv = pd.read_csv(csv)
         self.crop_size = crop_size
         self.validation = validation 
         self.buffer = buffer
         self.masks = make_masks((crop_size+6, crop_size+6), patterns)
+        self.resize = resize
     
     def __len__(self):
         return len(self.csv)
@@ -92,9 +93,11 @@ class DemoDataset(Dataset):
         deg_pattern = np.load(deg_pattern_path)
 
         H, W, C = gt_image.shape
-        dims = random_crop_dim((W, H), self.crop_size, self.buffer, validation=self.validation)
+        dims = random_crop_dim((W, H), self.crop_size*self.resize, self.buffer, validation=self.validation)
         h1, h2, w1, w2 = dims
-        gt_image = np.array(gt_image[h1:h2, w1:w2])
+        gt_image = np.array(gt_image[h1:h2, w1:w2]).astype('float32')
+        if self.resize>1:
+            gt_image = cv2.resize(gt_image, (self.crop_size, self.crop_size), interpolation=cv2.INTER_AREA)
         gt_image = gt_image.transpose(2, 0, 1)
 
         mask = get_mask(deg_pattern, self.masks)
