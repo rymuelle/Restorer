@@ -25,28 +25,30 @@ from src.training.losses.PSNR import PSNRLoss, psnr
 
 
 CONFIG = {
-    "model_name": "DemoNAFNet_noraf_5_iter_per_iter_2k",
+    "model_name": "DemoNAFNet_noraf_small_crop_new_exposure_corr",
     "experiment_name": "BaseDenoising",
     "batch_size": 16,
     "lr": 5e-4,
     "sched_end_factor": 1e-1,
-    "epochs": 1000//5,
+    "epochs": 1200,
     "seed": 42,
     "num_workers": 16,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "width": 32,
-    "middle_blk_num": 10,
-    "enc_blk_nums":[(0, 0), (0, 0), (4, 0), (8, 0)],
-    "dec_blk_nums":[(6, 0), (8, 0), (0, 0), (0, 0)],
+    "middle_blk_num": 8,
+    "enc_blk_nums":[(0, 0), (0, 0), (4, 0), (4, 0)],
+    "dec_blk_nums":[(4, 0), (4, 0), (0, 0), (0, 0)],
     "in_channels": 6,
     "lumi_noise": 0,
-    "crop_size": 128,
+    "crop_size": 64+16,
     "residual_mask": False,
     'SWL_scale': 0,
     "iso_range": [0, 1e9],
     "added_noise": 0.,
     "no_raf": True,
-    "iter_per_iter": 5,
+    "iter_per_iter": 1,
+    "CSV": "refit.csv",
+    "gb_filter": .1,
 
 }
 
@@ -63,10 +65,12 @@ def train():
 
 
     # dataset = JDDDataset(alignment_csv, validation=False, crop_size=(CONFIG['crop_size']))
-    dataset = JDDDataset("bad_image_csv.csv", validation=False, crop_size=CONFIG['crop_size'])
+    dataset = JDDDataset(CONFIG['CSV'], validation=False, crop_size=CONFIG['crop_size'])
     dataset.csv = dataset.csv[~dataset.csv.bad]
     dataset.csv = dataset.csv[(dataset.csv.iso >= CONFIG['iso_range'][0]) & 
                               (dataset.csv.iso <= CONFIG['iso_range'][1])]
+    dataset.csv = dataset.csv[(dataset.csv.gb-1).abs()<CONFIG['gb_filter']]
+
     if CONFIG['no_raf']:
         dataset.csv['raf'] =  dataset.csv.gt_out.str.contains('.raf')
         dataset.csv = dataset.csv[~dataset.csv.raf]
@@ -91,7 +95,7 @@ def train():
     scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=CONFIG["sched_end_factor"], total_iters=CONFIG["epochs"])
     criterion = nn.L1Loss()
     # criterion = CCMLoss()
-    texture_criteria = GramLoss(1).to(CONFIG['device'])
+    texture_criteria = SlicingLoss(1).to(CONFIG['device'])
 
     # MLflow Tracking
     mlflow.set_experiment(CONFIG["experiment_name"])
