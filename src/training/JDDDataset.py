@@ -120,7 +120,9 @@ class JDDDataset(Dataset):
         
     
         aligned = apply_alignment(_gt_patch, row.to_dict())[self.buffer:-self.buffer, self.buffer:-self.buffer]
-        aligned = row['a'] + row['b'] * aligned
+        a = np.array([[row['ra'],row['ga'],row['ba']]])
+        b = np.array([[row['rb'],row['gb'],row['bb']]])
+        aligned = a + b * aligned
         # Convert to tensors
         _deg = np.concat([sparse, mask], axis=0)
 
