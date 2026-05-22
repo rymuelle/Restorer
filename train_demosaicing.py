@@ -25,28 +25,29 @@ from src.training.losses.PSNR import PSNRLoss, psnr
 
 
 CONFIG = {
-    "model_name": "Demosaic_baseline_raf_smaller",
+    "model_name": "Demosaic_resize_2_32_long",
     "experiment_name": "BaseDemosaic",
     "batch_size": 16,
     "lr": 5e-4,
     "sched_end_factor": 1e-6,
-    "epochs": 100,
+    "epochs": 4500,
     "seed": 42,
     "num_workers": 16,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "width": 32,
-    "middle_blk_num": 1,
+    "middle_blk_num": 4,
     "enc_blk_nums":[(0, 0), (0, 0)],
     "dec_blk_nums":[(0, 0), (0, 0)],
     "in_channels": 6,
     "lumi_noise": 0,
-    "crop_size": 128,
+    "crop_size": 32,
     "residual_mask": False,
     'SWL_scale': 0,
     "iso_range": [0, 1e9],
     "added_noise": 0.,
     "no_raf": False,
     "iter_per_iter": 1,
+    "resize_gt": 2,
 
 }
 
@@ -62,7 +63,9 @@ def train():
     generator = torch.Generator().manual_seed(CONFIG["seed"])
 
 
-    dataset = DemoDataset("bad_image_csv.csv", validation=False, crop_size=CONFIG['crop_size'])
+    dataset = DemoDataset("bad_image_csv.csv", validation=False, 
+                          crop_size=CONFIG['crop_size'],
+                          resize=CONFIG['resize_gt'])
     if CONFIG['no_raf']:
         dataset.csv['raf'] =  dataset.csv.gt_out.str.contains('.raf')
         dataset.csv = dataset.csv[~dataset.csv.raf]
