@@ -18,9 +18,10 @@ import cv2
 from pathlib import Path
 
 
+from skimage.registration import phase_cross_correlation
 
 
-def align_clean_to_noisy(clean_img, noisy_img, refine=True, verbose=False):
+def align_clean_to_noisy(clean_img, noisy_img, blur_noisy=False):
     """
     Aligns the clean image to the noisy image and returns:
       - aligned image
@@ -28,61 +29,36 @@ def align_clean_to_noisy(clean_img, noisy_img, refine=True, verbose=False):
       - metrics dict (PSNR/SSIM before and after alignment)
     """
 
-    # --- convert to grayscale float32 for processing ---
     def to_gray_f(img):
         g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img.copy()
         g = g.astype(np.float32)
         g = (g - g.mean()) / (g.std() + 1e-8)
         return g
-
-    clean_gray = to_gray_f(clean_img)
-    noisy_gray = to_gray_f(noisy_img)
+    if blur_noisy:
+        noisy_img = cv2.GaussianBlur(noisy_img, (5, 5), 0)
+    noisy_gray = cv2.cvtColor(noisy_img, cv2.COLOR_BGR2GRAY)
+    clean_gray = cv2.cvtColor(clean_img, cv2.COLOR_BGR2GRAY)
+    # clean_gray = to_gray_f(clean_img)
+    # noisy_gray = to_gray_f(noisy_img)
 
     h, w = clean_gray.shape
     aligned = clean_img.copy()
 
-    # --- PHASE CORRELATION (coarse translation) ---
-    shift, response = cv2.phaseCorrelate(noisy_gray, clean_gray)  # (dx, dy)
-    dx, dy = shift
-    M_trans = np.array([[1, 0, dx], [0, 1, dy]], dtype=np.float32)
 
-    # apply translation
-    aligned = cv2.warpAffine(clean_img, M_trans, (w, h),
-                             flags=cv2.INTER_CUBIC + cv2.WARP_INVERSE_MAP,
-                             borderMode=cv2.BORDER_REFLECT)
+    # Align image
+    # noisy_filtered = cv2.GaussianBlur(deg_image, (5, 5), 0)
+    # noisy_filtered = cv2.cvtColor(noisy_filtered, cv2.COLOR_BGR2GRAY)
+    # gt_image_bw = cv2.cvtColor(gt_image, cv2.COLOR_BGR2GRAY)
+    detected_shift, error, phasediff = phase_cross_correlation(
+        clean_gray, noisy_gray, upsample_factor=10
+    )
+    shift_y, shift_x = detected_shift
+    M = np.float32([[1, 0, -shift_x], 
+                    [0, 1, -shift_y]])
 
-    # --- optional ECC refinement (affine) ---
-    if refine:
-        warp_mode = cv2.MOTION_AFFINE
-        warp_matrix = np.eye(2, 3, dtype=np.float32)
-        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 2000, 1e-8)
-        try:
-            cc, warp_matrix = cv2.findTransformECC(
-                noisy_gray,  # template (target)
-                cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY).astype(np.float32) if aligned.ndim == 3 else aligned.astype(np.float32),
-                warp_matrix,
-                warp_mode,
-                criteria,
-                None,
-                5
-            )
-            if verbose:
-                print(f"ECC converged: corr={cc:.5f}")
-            # compose the transforms: M_total = M_ECC @ M_trans
-            M1 = np.vstack([M_trans, [0, 0, 1]])
-            M2 = np.vstack([warp_matrix, [0, 0, 1]])
-            M_total = (M2 @ M1)[:2, :]
-            aligned = cv2.warpAffine(clean_img, M_total, (w, h),
-                                     flags=cv2.INTER_CUBIC + cv2.WARP_INVERSE_MAP,
-                                     borderMode=cv2.BORDER_REFLECT)
-        except cv2.error as e:
-            if verbose:
-                print("ECC failed:", e)
-            M_total = M_trans
-    else:
-        M_total = M_trans
+    h, w = noisy_gray.shape[:2]
 
-    # --- compute metrics ---
+    aligned = cv2.warpAffine(clean_img, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
     def safe_gray(img):
         return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
 
@@ -100,17 +76,17 @@ def align_clean_to_noisy(clean_img, noisy_img, refine=True, verbose=False):
         "PSNR_after": after_psnr,
         "SSIM_before": before_ssim,
         "SSIM_after": after_ssim,
-        "dx": dx,
-        "dy": dy,
-        "response": response,
+        # "dx": dx,
+        # "dy": dy,
+        # "response": response,
     }
 
     # flatten warp matrix for CSV
     for i in range(2):
         for j in range(3):
-            metrics[f"m{i}{j}"] = float(M_total[i, j])
+            metrics[f"m{i}{j}"] = float(M[i, j])
 
-    return aligned, M_total, metrics
+    return aligned, M, metrics
 
 
 
