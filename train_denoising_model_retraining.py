@@ -25,7 +25,7 @@ from src.training.losses.PSNR import PSNRLoss, psnr
 
 
 CONFIG = {
-    "model_name": "Denoising_no_raf_finetune",
+    "model_name": "DemoNAFNet_noraf_small_crop_new_exposure_corr_slicing_ccm_corr_texture_added_noise",
     "experiment_name": "BaseDenoising",
     "batch_size": 16,
     "lr": 1e-4,
@@ -34,14 +34,19 @@ CONFIG = {
     "seed": 42,
     "num_workers": 16,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
-    "RUN_ID": "85de735a8e1e4d9b9a6ebce21b083991",
+    "RUN_ID": "c5d8473bf9f84d96aaefe4e636e9c7de",
     "lumi_noise": 0,
-    "crop_size": 256,
+    "crop_size": 64+16,
     "residual_mask": False,
-    'SWL_scale': 0.,
+    'SWL_scale': 0.1,
     "iso_range": [0, 1e9],
-    "added_noise": 0.,
+    "added_noise": 0.5,
     "no_raf": True,
+    "iter_per_iter": 1,
+    "CSV": "refit.csv",
+    "gb_filter": .1,
+
+
 }
 
 def measure_flops(model, mlflow):
@@ -57,10 +62,12 @@ def train():
 
 
     # dataset = JDDDataset(alignment_csv, validation=False, crop_size=(CONFIG['crop_size']))
-    dataset = JDDDataset("bad_image_csv.csv", validation=False, crop_size=CONFIG['crop_size'])
+    dataset = JDDDataset(CONFIG['CSV'], validation=False, crop_size=CONFIG['crop_size'])
     dataset.csv = dataset.csv[~dataset.csv.bad]
     dataset.csv = dataset.csv[(dataset.csv.iso >= CONFIG['iso_range'][0]) & 
                               (dataset.csv.iso <= CONFIG['iso_range'][1])]
+    dataset.csv = dataset.csv[(dataset.csv.gb-1).abs()<CONFIG['gb_filter']]
+
     if CONFIG['no_raf']:
         dataset.csv['raf'] =  dataset.csv.gt_out.str.contains('.raf')
         dataset.csv = dataset.csv[~dataset.csv.raf]
@@ -78,12 +85,13 @@ def train():
     model_uri = f"runs:/{CONFIG['RUN_ID']}/model"
     print(f"Loading model from {model_uri}...")
     model = mlflow.pytorch.load_model(model_uri).to(CONFIG["device"])
+    model.residual = False
                    
     optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["lr"])
     scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=CONFIG["sched_end_factor"], total_iters=CONFIG["epochs"])
     criterion = nn.L1Loss()
     # criterion = CCMLoss()
-    texture_criteria = GramLoss(1).to(CONFIG['device'])
+    texture_criteria = SlicingLoss(1, ).to(CONFIG['device'])
 
     # MLflow Tracking
     mlflow.set_experiment(CONFIG["experiment_name"])
@@ -100,26 +108,30 @@ def train():
             
             for output in tloader:
                 
+                
                 images, sparse = output['aligned'].to(CONFIG["device"]), output['deg'].to(CONFIG["device"])
                 mono_noise = output['mono_noise_proportion'].to(CONFIG["device"])
                 ccm = output['ccm'].to(CONFIG["device"])
                 images = (images * (1 + mono_noise * CONFIG['added_noise'])).clamp(0,1)
-                optimizer.zero_grad()
-                with torch.autocast(device_type=CONFIG["device"], dtype=torch.bfloat16):
-                    output = model(sparse)
-                    if CONFIG['SWL_scale'] > 0:
-                        tloss = texture_criteria(output, images) * CONFIG['SWL_scale']
-                    else:
-                        tloss = 0 
-                    loss = criterion(output, images)
-                loss += tloss
-                loss.backward()
-                optimizer.step()
-                
-                train_loss += loss.item() * images.size(0)
-                tloader.set_postfix({"loss": f"{loss.item():.4e}"})
+                for _ in range(CONFIG['iter_per_iter']):
+                    optimizer.zero_grad()
+                    with torch.autocast(device_type=CONFIG["device"], dtype=torch.bfloat16):
+                        output = model(sparse)
+                        if CONFIG['SWL_scale'] > 0:
+                            _output = torch.einsum('b c o, b c h w -> b o h w', ccm, output)
+                            _images = torch.einsum('b c o, b c h w -> b o h w', ccm, images)
+                            tloss = texture_criteria(_output, _images) * CONFIG['SWL_scale']
+                        else:
+                            tloss = 0 
+                        loss = criterion(output, images)
+                    loss += tloss
+                    loss.backward()
+                    optimizer.step()
+                    
+                    train_loss += loss.item() * images.size(0)
+                    tloader.set_postfix({"loss": f"{loss.item():.4e}"})
             
-            avg_train_loss = train_loss / len(train_set)
+            avg_train_loss = train_loss / (len(train_set) * CONFIG['iter_per_iter'])
             mlflow.log_metric("train_l1_loss", avg_train_loss, step=epoch)
             scheduler.step()
 
@@ -138,7 +150,9 @@ def train():
                     output = model(sparse)
                     loss = criterion(output, images)
                     if CONFIG['SWL_scale'] > 0:
-                        tloss = texture_criteria(output, images) * CONFIG['SWL_scale']
+                        _output = torch.einsum('b c o, b c h w -> b o h w', ccm, output)
+                        _images = torch.einsum('b c o, b c h w -> b o h w', ccm, images)
+                        tloss = texture_criteria(_output, _images) * CONFIG['SWL_scale']
                     else:
                         tloss = 0 
                    
