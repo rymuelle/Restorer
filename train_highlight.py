@@ -25,12 +25,12 @@ from src.training.losses.PSNR import PSNRLoss, psnr
 
 
 CONFIG = {
-    "model_name": "DemoNAf_highlight",
+    "model_name": "DemoNAf_highlight_l1_only_mask_loss_no_mask_training",
     "experiment_name": "BaseHighlight",
     "batch_size": 16,
     "lr": 5e-4,
-    "sched_end_factor": 1e-1,
-    "epochs": 1200,
+    "sched_end_factor": 1e-6,
+    "epochs": 400,
     "seed": 42,
     "num_workers": 16,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -42,7 +42,7 @@ CONFIG = {
     "lumi_noise": 0,
     "crop_size": 64+16,
     "residual_mask": False,
-    'SWL_scale': 0.1,
+    'SWL_scale': 0.0,
     "iso_range": [0, 1e9],
     "added_noise": 0.,
     "no_raf": True,
@@ -148,7 +148,7 @@ def train():
                     ccm = output['ccm'].to(CONFIG["device"])
                     clipping_mask = output['clipping_mask'].to(CONFIG["device"])
                     output = model(sparse)
-                    loss = criterion(output, images)
+                    loss = criterion(output[clipping_mask], images[clipping_mask])
                     if CONFIG['SWL_scale'] > 0:
                         tloss = texture_criteria(output, images) * CONFIG['SWL_scale']
                     else:

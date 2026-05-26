@@ -100,7 +100,8 @@ class HighlightDataset(Dataset):
         if self.resize>1:
             gt_image = cv2.resize(gt_image, (self.crop_size, self.crop_size), interpolation=cv2.INTER_AREA)
         gt_image = gt_image.transpose(2, 0, 1)
-        gt_image *= 1/gt_image.max()
+        scale = 1/gt_image.max()
+        gt_image *= scale 
         clipped_image = gt_image.clip(0, self.clipping_threshold)
         clipping_mask =( gt_image-clipped_image)>0
 
@@ -118,7 +119,7 @@ class HighlightDataset(Dataset):
             "clipping_mask": torch.from_numpy(clipping_mask),
             "six_chan": torch.from_numpy(six_chan).to(torch.float32).clamp_(0.0, 1.0),
             "six_chan_clipped": torch.from_numpy(six_chan_clipped).to(torch.float32).clamp_(0.0, 1.0),
-            "ccm": torch.from_numpy(deg_ccm).to(torch.float32)
-   
+            "ccm": torch.from_numpy(deg_ccm).to(torch.float32),
+            "scale": torch.tensor([scale], dtype=torch.float32),
         }
         return output
