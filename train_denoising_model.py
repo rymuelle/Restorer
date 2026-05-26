@@ -25,11 +25,11 @@ from src.training.losses.PSNR import PSNRLoss, psnr
 
 
 CONFIG = {
-    "model_name": "DemoNAFNet_noraf_small_crop_new_exposure_corr",
+    "model_name": "DemoNAFNet_RAF",
     "experiment_name": "BaseDenoising",
     "batch_size": 16,
     "lr": 5e-4,
-    "sched_end_factor": 1e-1,
+    "sched_end_factor": 1e-6,
     "epochs": 1200,
     "seed": 42,
     "num_workers": 16,
@@ -45,7 +45,7 @@ CONFIG = {
     'SWL_scale': 0,
     "iso_range": [0, 1e9],
     "added_noise": 0.,
-    "no_raf": True,
+    "no_raf": False,
     "iter_per_iter": 1,
     "CSV": "refit.csv",
     "gb_filter": .1,
@@ -144,6 +144,7 @@ def train():
             vloader = tqdm(val_loader, desc=f"Epoch {epoch+1} [Val]")
             
             with torch.no_grad():
+                dataset.validation = True
                 for output in vloader:
                     images, sparse = output['aligned'].to(CONFIG["device"]), output['deg'].to(CONFIG["device"])
                     mono_noise = output['mono_noise_proportion'].to(CONFIG["device"])
@@ -160,7 +161,7 @@ def train():
                     val_loss += loss.item() * images.size(0)
                     psnr_loss = psnr(output, images) * images.size(0)
                     val_psnr_loss += psnr_loss
-            
+                dataset.validation = False
             avg_val_loss = val_loss / len(val_set)
             avg_val_psnr = val_psnr_loss / len(val_set)
             mlflow.log_metric("val_l1_loss", avg_val_loss, step=epoch)
