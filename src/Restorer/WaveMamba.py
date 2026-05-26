@@ -960,14 +960,14 @@ class SKFF(nn.Module):
 
 
 class DownFRG(nn.Module):
-    def __init__(self, dim, n_l_blocks=1, n_h_blocks=1, expand=2):
+    def __init__(self, dim, num_heads=1, n_l_blocks=1, n_h_blocks=1, expand=2):
         super().__init__()
         self.dwt = DWT()
         self.l_conv = nn.Conv2d(dim*2, dim, 3, 1, 1)
         self.l_blk = nn.Sequential(*[LFSSBlock(dim, expand=expand) for _ in range(n_l_blocks)])
 
         self.h_fusion = SKFF(dim, height=3, reduction=8)
-        self.h_blk = nn.Sequential(*[HFEBlock(dim, match_factor=1, ffn_expansion_factor=1) for _ in range(n_h_blocks)])
+        self.h_blk = nn.Sequential(*[HFEBlock(dim, num_heads=num_heads, match_factor=1, ffn_expansion_factor=1) for _ in range(n_h_blocks)])
     
     def forward(self, x, x_d):
         x_LL, x_HL, x_LH, x_HH = self.dwt(x)
@@ -985,13 +985,13 @@ class DownFRG(nn.Module):
         return x_LL, x_h
 
 class upFRG(nn.Module):
-    def __init__(self, dim, n_l_blocks=1, n_h_blocks=1, expand=2):
+    def __init__(self, dim, num_heads=1, n_l_blocks=1, n_h_blocks=1, expand=2):
         super().__init__()
         self.iwt = IWT()
         self.l_blk = nn.Sequential(*[LFSSBlock(dim, expand=expand) for _ in range(n_l_blocks)])
 
         self.h_out_conv = nn.Conv2d(dim, dim*3, 3, 1, 1)
-        self.h_blk = nn.Sequential(*[HFEBlock(dim, match_factor=1, ffn_expansion_factor=1) for _ in range(n_h_blocks)])
+        self.h_blk = nn.Sequential(*[HFEBlock(dim, num_heads=num_heads, match_factor=1, ffn_expansion_factor=1) for _ in range(n_h_blocks)])
     
     def forward(self, x_l, x_h):
         b, c, h, w = x_l.shape
@@ -1009,7 +1009,7 @@ class upFRG(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, img_channel=3, in_channels=6, wf=48, n_l_blocks=[1,1,2], n_h_blocks=[1,1,1], ffn_scale=2):
+    def __init__(self, img_channel=3, in_channels=6, wf=48, num_heads=[8,8,8], n_l_blocks=[1,1,2], n_h_blocks=[1,1,1], ffn_scale=2):
         super(UNet, self).__init__()
         self.ps_down1 = nn.Sequential(
             nn.PixelUnshuffle(2),
@@ -1027,14 +1027,14 @@ class UNet(nn.Module):
 
         # encoder of UNet-64
         prev_channels = 0
-        self.down_group1 = DownFRG(wf, n_l_blocks=n_l_blocks[0], n_h_blocks=n_h_blocks[0], expand=ffn_scale)
-        self.down_group2 = DownFRG(wf, n_l_blocks=n_l_blocks[1], n_h_blocks=n_h_blocks[1], expand=ffn_scale)
-        self.down_group3 = DownFRG(wf, n_l_blocks=n_l_blocks[2], n_h_blocks=n_h_blocks[2], expand=ffn_scale)
+        self.down_group1 = DownFRG(wf, num_heads=num_heads[0], n_l_blocks=n_l_blocks[0], n_h_blocks=n_h_blocks[0], expand=ffn_scale)
+        self.down_group2 = DownFRG(wf, num_heads=num_heads[1], n_l_blocks=n_l_blocks[1], n_h_blocks=n_h_blocks[1], expand=ffn_scale)
+        self.down_group3 = DownFRG(wf, num_heads=num_heads[2], n_l_blocks=n_l_blocks[2], n_h_blocks=n_h_blocks[2], expand=ffn_scale)
 
         # decoder of UNet-64
-        self.up_group3 = upFRG(wf, n_l_blocks=n_l_blocks[2], n_h_blocks=n_h_blocks[2], expand=ffn_scale)
-        self.up_group2 = upFRG(wf, n_l_blocks=n_l_blocks[1], n_h_blocks=n_h_blocks[1], expand=ffn_scale)
-        self.up_group1 = upFRG(wf, n_l_blocks=n_l_blocks[0], n_h_blocks=n_h_blocks[0], expand=ffn_scale)
+        self.up_group3 = upFRG(wf, num_heads=num_heads[2], n_l_blocks=n_l_blocks[2], n_h_blocks=n_h_blocks[2], expand=ffn_scale)
+        self.up_group2 = upFRG(wf, num_heads=num_heads[1], n_l_blocks=n_l_blocks[1], n_h_blocks=n_h_blocks[1], expand=ffn_scale)
+        self.up_group1 = upFRG(wf, num_heads=num_heads[0], n_l_blocks=n_l_blocks[0], n_h_blocks=n_h_blocks[0], expand=ffn_scale)
 
         self.last = nn.Conv2d(wf, img_channel, kernel_size=3, stride=1, padding=1, bias=True)
 
