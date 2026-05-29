@@ -87,12 +87,13 @@ def compute_mask_and_sparse(
 
 
 class JDDDataset(Dataset):
-    def __init__(self, csv, crop_size=256, buffer=10, validation=False):
+    def __init__(self, csv, crop_size=256, buffer=10, validation=False, augment=False):
         super().__init__()
         self.csv = pd.read_csv(csv)
         self.crop_size = crop_size
         self.validation = validation 
         self.buffer = buffer
+        self.augment = augment
     
     def __len__(self):
         return len(self.csv)
@@ -123,17 +124,18 @@ class JDDDataset(Dataset):
         a = np.array([[row['ra'],row['ga'],row['ba']]])
         b = np.array([[row['rb'],row['gb'],row['bb']]])
         aligned = a + b * aligned
-        # Convert to tensors
+        aligned = aligned.transpose(2, 0, 1)
+        # Au
+        if self.augment:
+            brightness_range = (0.8, 1/aligned.max()*1.2)
+            sparse, aligned = augment_pair(sparse, aligned, brightness_range=brightness_range)
         _deg = np.concat([sparse, mask], axis=0)
 
 
-
         output = {
-            "aligned": torch.from_numpy(aligned).permute(2, 0, 1).to(torch.float32).clamp_(0.0, 1.0),
-            
+            "aligned": torch.from_numpy(aligned).to(torch.float32).clamp_(0.0, 1.0),
             "deg": torch.from_numpy(_deg).to(torch.float32).clamp_(0.0, 1.0),
             "iso": torch.tensor([row.iso], dtype=torch.float32),
-            
             "ccm": torch.from_numpy(deg_ccm).to(torch.float32)
         }
 
@@ -145,3 +147,42 @@ class JDDDataset(Dataset):
             mono_noise_proportion = output['mono_noise']/(cfa_gt+1e-6)
             output['mono_noise_proportion'] =  mono_noise_proportion
         return output
+
+
+import numpy as np
+
+def augment_pair(img1, img2, brightness_range=(0.8, 1.2)):
+    """
+    Applies identical random rotations and flips to both arrays to keep them aligned,
+    and applies independent or joint exposure variations.
+    
+    Parameters:
+        img1, img2 (np.ndarray): Arrays of shape (c, h, w)
+        brightness_range (tuple): Min and max multiplier for exposure
+        
+    Returns:
+        tuple: Augmented img1 and img2
+    """
+    assert img1.shape == img2.shape, "Arrays must have the same shape"
+    assert len(img1.shape) == 3, "Input arrays must be of shape (c, h, w)"
+    
+    k_rot = np.random.randint(0, 4)
+    if k_rot > 0:
+        img1 = np.rot90(img1, k=k_rot, axes=(1, 2))
+        img2 = np.rot90(img2, k=k_rot, axes=(1, 2))
+        
+    if np.random.rand() > 0.5:
+        img1 = np.flip(img1, axis=2) # axis 2 is width
+        img2 = np.flip(img2, axis=2)
+        
+    if np.random.rand() > 0.5:
+        img1 = np.flip(img1, axis=1) # axis 1 is height
+        img2 = np.flip(img2, axis=1)
+        
+
+    scale = np.random.uniform(*brightness_range)
+
+    img1 = np.clip(img1 * scale, 0.0, 1.0)
+    img2 = np.clip(img2 * scale, 0.0, 1.0)
+    
+    return img1, img2
