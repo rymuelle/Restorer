@@ -20,24 +20,26 @@ run_config = load_config()
 outpath = Path(run_config['numpy_raw_subdir'])
 alignment_csv =  outpath / run_config['align_csv']
 from src.training.JDDDataset import JDDDataset
-from src.Restorer.DemoNAFNet import DemoNAFNet
+
 from src.training.losses.PSNR import PSNRLoss, psnr
 
 
 CONFIG = {
-    "model_name": "DemoNAFNet_RAF",
+    "model_name": "DemoNAFNetMamba_mamba_dec_v2",
     "experiment_name": "BaseDenoising",
     "batch_size": 16,
     "lr": 5e-4,
     "sched_end_factor": 1e-6,
-    "epochs": 1200,
+    "epochs": 200,
     "seed": 42,
     "num_workers": 16,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "width": 32,
-    "middle_blk_num": 8,
-    "enc_blk_nums":[(0, 0), (0, 0), (4, 0), (4, 0)],
+    "middle_blk_num": (4, 4),
+    "enc_blk_nums":[(0, 0), (0, 0), (2, 2), (2, 2)],
     "dec_blk_nums":[(4, 0), (4, 0), (0, 0), (0, 0)],
+    
+    "num_heads": [1, 2, 4, 8, 16],
     "in_channels": 6,
     "lumi_noise": 0,
     "crop_size": 64+16,
@@ -45,10 +47,11 @@ CONFIG = {
     'SWL_scale': 0,
     "iso_range": [0, 1e9],
     "added_noise": 0.,
-    "no_raf": False,
+    "no_raf": True,
     "iter_per_iter": 1,
     "CSV": "refit.csv",
     "gb_filter": .1,
+    "model": "DemoNAFNetMamba"
 
 }
 
@@ -85,11 +88,32 @@ def train():
     val_loader = DataLoader(val_set, batch_size=CONFIG["batch_size"], shuffle=False, 
                             generator=generator, num_workers=CONFIG["num_workers"])
 
-    model = DemoNAFNet(in_channels=CONFIG['in_channels'], width=CONFIG["width"],
-                        middle_blk_num=CONFIG["middle_blk_num"], 
-                   enc_blk_nums=CONFIG["enc_blk_nums"], dec_blk_nums=CONFIG["dec_blk_nums"],
-                     mask=CONFIG['residual_mask'],
-                    ).to(CONFIG["device"], )
+    if CONFIG['model'] == "DemoRestormer":
+        from src.Restorer.DemoRestormer import DemoRestormer
+        model = DemoRestormer(in_channels=CONFIG['in_channels'], width=CONFIG["width"],
+                            middle_blk_num=CONFIG["middle_blk_num"], 
+                    enc_blk_nums=CONFIG["enc_blk_nums"], dec_blk_nums=CONFIG["dec_blk_nums"],
+                        mask=CONFIG['residual_mask'], num_heads=CONFIG['num_heads']
+                        ).to(CONFIG["device"], )
+    if CONFIG['model'] == "DemoNAFNetMamba":
+        from src.Restorer.DemoNAFNetMamba import DemoNAFNetMamba
+        model = DemoNAFNetMamba(in_channels=CONFIG['in_channels'], width=CONFIG["width"],
+                            middle_blk_num=CONFIG["middle_blk_num"], 
+                    enc_blk_nums=CONFIG["enc_blk_nums"], dec_blk_nums=CONFIG["dec_blk_nums"],
+                        mask=CONFIG['residual_mask'],
+                        ).to(CONFIG["device"], )
+    if CONFIG['model'] == "DemoNAFNetEAMamba":
+        from src.Restorer.DemoNAFNetEAMamba import DemoNAFNetEAMamba
+        model = DemoNAFNetEAMamba(in_channels=CONFIG['in_channels'], width=CONFIG["width"],
+                            middle_blk_num=CONFIG["middle_blk_num"], 
+                    enc_blk_nums=CONFIG["enc_blk_nums"], dec_blk_nums=CONFIG["dec_blk_nums"],
+                        mask=CONFIG['residual_mask'],
+                        ).to(CONFIG["device"], )
+    else:
+        from src.Restorer.DemoNAFNet import DemoNAFNet
+        Model = DemoNAFNet
+
+    print(model)
                    
     optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["lr"])
     scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=CONFIG["sched_end_factor"], total_iters=CONFIG["epochs"])
