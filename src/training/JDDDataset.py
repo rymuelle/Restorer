@@ -127,7 +127,7 @@ class JDDDataset(Dataset):
         aligned = aligned.transpose(2, 0, 1)
         # Au
         if self.augment:
-            brightness_range = (0.8, 1/aligned.max()*1.2)
+            brightness_range = (1,1) #(0.8, 1/aligned.max()*1.2)
             sparse, aligned = augment_pair(sparse, aligned, brightness_range=brightness_range)
         _deg = np.concat([sparse, mask], axis=0)
 
