@@ -12,6 +12,7 @@ import mlflow.pytorch
 
 # Domain/Project-specific Imports
 from SWLoss.src.slicing_loss import SlicingLoss, GramLoss
+from src.training.losses.ShadowAwareLoss import ShadowWeightedL1
 from src.training.load_config import load_config
 from src.training.losses.CCMLoss import CCMLoss
 from src.training.JDDDataset import JDDDataset
@@ -25,20 +26,19 @@ from src.Restorer.DemoNAFNetDIT import DemoNAFNetDIT
 from src.Restorer.DemoNAFNet import DemoNAFNet
 
 CONFIG = {
-    "model_name": "DemoNAFNetDIT",
+    "model_name": "DemoNAF_heavy_no_gamma_cont_no_bl",
     "experiment_name": "BaseDenoising",
-    "lr": 5e-4,
+    "lr": 2e-4,
     "sched_end_factor": 1e-6,
-    "epochs": 1000,
+    "epochs": 200,
     "seed": 42,
     "num_workers": 16,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "width": 32,
-    "middle_blk_num": (2, 0),
-    "enc_blk_nums":[(1, 0), (1, 0), (2, 0), (2, 0)],
-    "dec_blk_nums":[(2, 0), (2, 0), (1, 0), (1, 0)],
-    
-    "num_heads": 4,
+    "middle_blk_num": (10, 0),
+    "enc_blk_nums":[(2, 0), (2, 0), (4, 0), (6, 0)],
+    "dec_blk_nums":[(2, 0), (2, 0), (2, 0), (2, 0)],
+    "num_heads": 8,
     "in_channels": 6,
     "lumi_noise": 0,
     "residual_mask": False,
@@ -47,17 +47,27 @@ CONFIG = {
     "added_noise": 0.,
     "no_raf": True,
     "iter_per_iter": 1,
-    "CSV": "refit.csv",
+    "CSV": "with_black_level.csv",
     "gb_filter": .1,
-    "model": "DemoNAFNetDIT"
+    "model": "475c9355c4fb423c878358ef579a62a0",
+    "augment_dataset": True,
+    "gamma_loss": 0.,
+    "subtract_bl": False,
+    "lpips": 0,
+    "apply_ccm": False,
+    "pw_criterion": ShadowWeightedL1(),
 }
-
 TRAINING_SCHEDULE = [
-    {"start_epoch": 0,   "crop_size": 80,  "batch_size": 16},
-    {"start_epoch": int(.5*CONFIG['epochs']), "crop_size": 128, "batch_size": 16},
-    {"start_epoch": int(.8*CONFIG['epochs']), "crop_size": 256, "batch_size": 16},
+    {"start_epoch": int(0), "crop_size": 256, "batch_size": 16},
 
 ]
+# TRAINING_SCHEDULE = [
+#     {"start_epoch": 0,   "crop_size": 80,  "batch_size": 32},
+#     {"start_epoch": int(.4*CONFIG['epochs']), "crop_size": 128, "batch_size": 16},
+#     {"start_epoch": int(.6*CONFIG['epochs']), "crop_size": 196, "batch_size": 16},
+#     {"start_epoch": int(.8*CONFIG['epochs']), "crop_size": 256, "batch_size": 16},
+
+# ]
 print(TRAINING_SCHEDULE)
 
 
@@ -83,27 +93,32 @@ def model_factory(model_name, config, device):
         "DemoNAFNetDIT": DemoNAFNetDIT,
         "DemoNAFNet": DemoNAFNet
     }
-    
-    model_class = models_map.get(model_name, DemoNAFNet)
-    kwargs = {
-        "in_channels": config['in_channels'],
-        "width": config["width"],
-        "middle_blk_num": config["middle_blk_num"],
-        "enc_blk_nums": config["enc_blk_nums"],
-        "dec_blk_nums": config["dec_blk_nums"],
-        "mask": config['residual_mask']
-    }
-    
-    if model_name in ["DemoRestormer", "DemoNAFNetDIT"]:
-        kwargs["num_heads"] = config['num_heads']
+    try:
+        model_class = models_map.get(model_name, DemoNAFNet)
+        kwargs = {
+            "in_channels": config['in_channels'],
+            "width": config["width"],
+            "middle_blk_num": config["middle_blk_num"],
+            "enc_blk_nums": config["enc_blk_nums"],
+            "dec_blk_nums": config["dec_blk_nums"],
+            "mask": config['residual_mask']
+        }
         
-    return model_class(**kwargs).to(device)
+        if model_name in ["DemoRestormer", "DemoNAFNetDIT"]:
+            kwargs["num_heads"] = config['num_heads']
+            
+        return model_class(**kwargs).to(device)
+    except:
+        model_uri = f"runs:/{CONFIG['model']}/model"
+        print(f"Loading model from {model_uri}...")
+        model = mlflow.pytorch.load_model(model_uri).to(CONFIG["device"])  
+        return model
 
 
 def prepare_datasets(config, generator):
     """Instantiates base datasets with a placeholder crop size (updated dynamically later)."""
-    train_dataset = JDDDataset(config['CSV'], validation=False, crop_size=64)
-    val_dataset = JDDDataset(config['CSV'], validation=True, crop_size=64)
+    train_dataset = JDDDataset(config['CSV'], validation=False, crop_size=64, augment=CONFIG['augment_dataset'], subtract_bl=CONFIG['subtract_bl'])
+    val_dataset = JDDDataset(config['CSV'], validation=True, crop_size=64, augment=False, subtract_bl=CONFIG['subtract_bl'])
 
     for dataset in [train_dataset, val_dataset]:
         dataset.csv = dataset.csv[~dataset.csv.bad]
@@ -145,7 +160,8 @@ def train():
     scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer, start_factor=1.0, end_factor=CONFIG["sched_end_factor"], total_iters=CONFIG["epochs"]
     )
-    criterion = nn.L1Loss()
+    criterion = CCMLoss(gamma=CONFIG['gamma_loss'], lpips=CONFIG['lpips'], apply_ccm=CONFIG['apply_ccm'], criterion=CONFIG['pw_criterion'])
+    criterion = criterion.to(device)
     texture_criteria = SlicingLoss(1).to(device)
 
     mlflow.set_experiment(CONFIG["experiment_name"])
@@ -207,7 +223,7 @@ def train():
                     with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                         output = model(sparse)
                         tloss = texture_criteria(output, images) * CONFIG['SWL_scale'] if CONFIG['SWL_scale'] > 0 else 0
-                        loss = criterion(output, images) + tloss
+                        loss = criterion(output, images, ccm) + tloss
                     
                     loss.backward()
                     optimizer.step()
@@ -239,7 +255,7 @@ def train():
                     with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
                         output = model(sparse)
                         tloss = texture_criteria(output, images) * CONFIG['SWL_scale'] if CONFIG['SWL_scale'] > 0 else 0
-                        loss = criterion(output, images) + tloss
+                        loss = criterion(output, images, ccm) + tloss
                    
                     val_loss += loss.item() * images.size(0)
                     val_psnr_loss += psnr(output, images) * images.size(0)
@@ -252,7 +268,7 @@ def train():
             print(f"Epoch {epoch+1}: Val Loss: {avg_val_loss:.4e} PSNR: {avg_val_psnr:.1f}")
 
         mlflow.pytorch.log_model(model, "model")
-        torch.save(model.state_dict(), f"{CONFIG['model_name']}_final.pth")
+        torch.save(model.state_dict(), f"weights/{CONFIG['model_name']}_final.pth")
 
 
 if __name__ == "__main__":
