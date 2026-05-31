@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from pathlib import Path
 import torch
 import torch.nn as nn
@@ -24,51 +25,6 @@ from src.Restorer.DemoNAFNetMamba import DemoNAFNetMamba
 from src.Restorer.DemoNAFNetEAMamba import DemoNAFNetEAMamba
 from src.Restorer.DemoNAFNetDIT import DemoNAFNetDIT
 from src.Restorer.DemoNAFNet import DemoNAFNet
-
-CONFIG = {
-    "model_name": "DemoNAF_heavy_no_gamma_cont_no_bl",
-    "experiment_name": "BaseDenoising",
-    "lr": 2e-4,
-    "sched_end_factor": 1e-6,
-    "epochs": 200,
-    "seed": 42,
-    "num_workers": 16,
-    "device": "cuda" if torch.cuda.is_available() else "cpu",
-    "width": 32,
-    "middle_blk_num": (10, 0),
-    "enc_blk_nums":[(2, 0), (2, 0), (4, 0), (6, 0)],
-    "dec_blk_nums":[(2, 0), (2, 0), (2, 0), (2, 0)],
-    "num_heads": 8,
-    "in_channels": 6,
-    "lumi_noise": 0,
-    "residual_mask": False,
-    'SWL_scale': 0,
-    "iso_range": [0, 1e9],
-    "added_noise": 0.,
-    "no_raf": True,
-    "iter_per_iter": 1,
-    "CSV": "with_black_level.csv",
-    "gb_filter": .1,
-    "model": "475c9355c4fb423c878358ef579a62a0",
-    "augment_dataset": True,
-    "gamma_loss": 0.,
-    "subtract_bl": False,
-    "lpips": 0,
-    "apply_ccm": False,
-    "pw_criterion": ShadowWeightedL1(),
-}
-TRAINING_SCHEDULE = [
-    {"start_epoch": int(0), "crop_size": 256, "batch_size": 16},
-
-]
-# TRAINING_SCHEDULE = [
-#     {"start_epoch": 0,   "crop_size": 80,  "batch_size": 32},
-#     {"start_epoch": int(.4*CONFIG['epochs']), "crop_size": 128, "batch_size": 16},
-#     {"start_epoch": int(.6*CONFIG['epochs']), "crop_size": 196, "batch_size": 16},
-#     {"start_epoch": int(.8*CONFIG['epochs']), "crop_size": 256, "batch_size": 16},
-
-# ]
-print(TRAINING_SCHEDULE)
 
 
 def measure_flops(model, device, crop_size, epoch):
@@ -160,8 +116,9 @@ def train():
     scheduler = torch.optim.lr_scheduler.LinearLR(
         optimizer, start_factor=1.0, end_factor=CONFIG["sched_end_factor"], total_iters=CONFIG["epochs"]
     )
-    criterion = CCMLoss(gamma=CONFIG['gamma_loss'], lpips=CONFIG['lpips'], apply_ccm=CONFIG['apply_ccm'], criterion=CONFIG['pw_criterion'])
+    criterion = CCMLoss(gamma=CONFIG['gamma_loss'], lpips=CONFIG['lpips'], apply_ccm=CONFIG['apply_ccm'], criterion=CONFIG['pw_criterion_obj'])
     criterion = criterion.to(device)
+    print(criterion)
     texture_criteria = SlicingLoss(1).to(device)
 
     mlflow.set_experiment(CONFIG["experiment_name"])
@@ -176,7 +133,7 @@ def train():
             
             active_stage = None
             for stage in TRAINING_SCHEDULE:
-                if epoch >= stage["start_epoch"]:
+                if epoch >= stage["start_epoch"]*CONFIG['epochs']:
                     active_stage = stage
             
             # Re-initialize data pipelines if we entered a new stage boundary
@@ -270,7 +227,29 @@ def train():
         mlflow.pytorch.log_model(model, "model")
         torch.save(model.state_dict(), f"weights/{CONFIG['model_name']}_final.pth")
 
+def load_external_config(config_path="config.json"):
+    """Loads JSON config and processes dynamic objects like devices or loss functions."""
+    with open(config_path, "r") as f:
+        config = json.load(f)
+    
+    if config["device"] == "cuda":
+        config["device"] = "cuda" if torch.cuda.is_available() else "cpu"
+        
+    if config["pw_criterion"] == "ShadowWeightedL1":
+        config["pw_criterion_obj"] = ShadowWeightedL1()
+    else:
+        config["pw_criterion_obj"] = nn.L1Loss()
+        
+    training_schedule = config.pop("TRAINING_SCHEDULE")
+    
+    config["middle_blk_num"] = tuple(config["middle_blk_num"])
+    config["enc_blk_nums"] = [tuple(x) for x in config["enc_blk_nums"]]
+    config["dec_blk_nums"] = [tuple(x) for x in config["dec_blk_nums"]]
+    
+    return config, training_schedule
 
 if __name__ == "__main__":
     torch.cuda.empty_cache()
+    config_path = sys.argv[1]
+    CONFIG, TRAINING_SCHEDULE = load_external_config(config_path)
     train()

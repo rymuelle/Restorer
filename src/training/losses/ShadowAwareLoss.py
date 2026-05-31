@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-from pytorch_msssim import ms_ssim
-from src.training.losses.CombinedPerceptualLoss import VGGPerceptualLoss
+
 import torchvision
 
 class ShadowAwareLoss(nn.Module):
@@ -29,6 +28,8 @@ class ShadowAwareLoss(nn.Module):
             device: Optional device to move inputs and buffers to.
         """
         super().__init__()
+        from pytorch_msssim import ms_ssim
+        from src.training.losses.CombinedPerceptualLoss import VGGPerceptualLoss
         self.alpha = alpha
         self.beta = beta
         self.l1_weight = l1_weight
@@ -38,7 +39,7 @@ class ShadowAwareLoss(nn.Module):
         self.apply_gamma_fn = apply_gamma_fn
         self.vfe = vgg_feature_extractor
         self.device = device
-        self.percept_loss_weight = percept_loss_weight
+        self.percept_loss_weight = percept_loss_weights
         self.VGGPerceptualLoss = VGGPerceptualLoss()
         self.sharpness_loss_weight = sharpness_loss_weight
 
@@ -109,3 +110,40 @@ def sharpness_loss(pred, target, loss_func = torch.nn.functional.l1_loss):
     target_prime = torchvision.transforms.functional.gaussian_blur(target, kernel_size=[5, 5], sigma=[1.0, 1.0])
     loss += loss_func(pred-pred_prime, target-target_prime)
     return loss
+
+
+
+class ShadowWeightedL1(nn.Module):
+    def __init__(self,
+                 floor=0.2,
+                 eps=2e-1,
+    ):
+        """
+        A shadow weighted L1 to prevent high noise floors in dark regions.
+
+        Args:
+            floor: Constant weight applied. Ensures brigh pixels have at least some weight.
+            eps: Value added to pixel values to ensure they are not zero and control the falloff.
+        """
+        super().__init__()
+        self.floor = floor
+        self.eps = eps
+
+    def compute_tone_weight(self, lumi):
+        tone_weight = self.floor + (1.0 - self.floor) / (lumi + self.eps) * (self.eps)
+        tone_weight = tone_weight.unsqueeze(1) 
+        return tone_weight
+
+    def forward(self, pred, target):
+        """
+        Args:
+            pred: [B, C, H, W] restored image in [0,1]
+            target: [B, C, H, W] ground truth in [0,1]
+        """
+
+        # Convert to luminance (BT.709)
+        lumi = 0.2126 * target[:, 0] + 0.7152 * target[:, 1] + 0.0722 * target[:, 2]  # [B, H, W]
+        tone_weight = self.compute_tone_weight(lumi)
+        # Weighted L1 loss
+        l1 = (tone_weight * torch.abs(pred - target)).mean()
+        return l1

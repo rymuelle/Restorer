@@ -157,7 +157,7 @@ class RoPEAttention(nn.Module):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        # self.scale = self.head_dim ** -0.5
         
         self.qkv = nn.Linear(dim, dim * 3, bias=True)
         self.proj = nn.Linear(dim, dim, bias=True)
@@ -172,10 +172,12 @@ class RoPEAttention(nn.Module):
         k = apply_rope_2d(k, rope_mats)
         
         # Standard scaled dot-product attention
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
+        # attn = (q @ k.transpose(-2, -1)) * self.scale
+        # attn = attn.softmax(dim=-1)
         
-        out = (attn @ v).transpose(1, 2).reshape(B, L, C)
+        # out = (attn @ v).transpose(1, 2).reshape(B, L, C)
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        out = out.reshape(B, L, C)
         return self.proj(out)
 
 

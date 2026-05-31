@@ -87,13 +87,14 @@ def compute_mask_and_sparse(
 
 
 class JDDDataset(Dataset):
-    def __init__(self, csv, crop_size=256, buffer=10, validation=False, augment=False):
+    def __init__(self, csv, crop_size=256, buffer=10, validation=False, augment=False, subtract_bl=False):
         super().__init__()
         self.csv = pd.read_csv(csv)
         self.crop_size = crop_size
         self.validation = validation 
         self.buffer = buffer
         self.augment = augment
+        self.subtract_bl = subtract_bl
     
     def __len__(self):
         return len(self.csv)
@@ -125,6 +126,13 @@ class JDDDataset(Dataset):
         b = np.array([[row['rb'],row['gb'],row['bb']]])
         aligned = a + b * aligned
         aligned = aligned.transpose(2, 0, 1)
+        if self.subtract_bl:
+            # gt_black = row.filter(regex='gt_black_').mean()
+            deg_black = row.filter(regex='deg_black_').mean()
+            aligned -= deg_black
+            sparse -= deg_black
+            sparse = sparse.clip(0, 1)
+            aligned = aligned.clip(0, 1)
         # Au
         if self.augment:
             brightness_range = (1,1) #(0.8, 1/aligned.max()*1.2)
