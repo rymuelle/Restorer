@@ -180,7 +180,7 @@ class RoPEAttention(nn.Module):
         
         # out = (attn @ v).transpose(1, 2).reshape(B, L, C)
         out = F.scaled_dot_product_attention(q, k, v, is_causal=False)
-        out = out.reshape(B, L, C)
+        out = out.transpose(1, 2).contiguous().view(B, L, C)
         return self.proj(out)
 
 
