@@ -129,7 +129,7 @@ class RoPE2D(nn.Module):
         return emb.sin(), emb.cos()
 
     def forward(self, H, W, device):
-        if (H, W) in self.rope_cache:
+        if (H, W, str(device)) in self.rope_cache:
             return self.rope_cache[(H, W, str(device))]
         pos_h = torch.arange(H, device=device, dtype=torch.float32)
         pos_w = torch.arange(W, device=device, dtype=torch.float32)
@@ -190,13 +190,13 @@ class RoPEAttention(nn.Module):
         B, L, C = x.shape
         qkv = self.qkv(x).reshape(B, L, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        
+
+        # QK norm
+        q, k = self.q_norm(q), self.k_norm(k)
+
         # Apply axial rotary embeddings to queries and keys
         q = apply_rope_2d(q, rope_mats)
         k = apply_rope_2d(k, rope_mats)
-        
-        # QK norm
-        q, k = self.q_norm(q), self.k_norm(k)
 
         # Standard scaled dot-product attention
         # attn = (q @ k.transpose(-2, -1)) * self.scale
@@ -211,22 +211,21 @@ class DWFFN(nn.Module):
     def __init__(self, dim, mlp_dim):
         super().__init__()
         self.conv1 = nn.Conv2d(dim, mlp_dim, 1)
-        self.conv2 = nn.Conv2d(mlp_dim, mlp_dim, kernel_size=3, padding=1, groups=dim)
-        self.act = SimpleGate()
+        self.conv2 = nn.Conv2d(mlp_dim, mlp_dim, kernel_size=3, padding=1, groups=mlp_dim)
         self.conv3 = nn.Conv2d(mlp_dim // 2, dim, 1)
 
     def forward(self, x, H, W):
         B, N, C = x.shape
         x = x.transpose(1, 2).reshape(B, C, H, W)
         x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.act(x)
-        x = self.conv3(x)
+        x1, x2 = self.conv2(x).chunk(2, dim=1)
+        x = self.conv3(F.gelu(x1) * x2)
         x = x.flatten(2).transpose(1, 2)
         return x
     
+    
 class DiTBlock(nn.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=2.0, time_emb_dim=None):
+    def __init__(self, dim, num_heads, mlp_ratio=4.0, time_emb_dim=None):
         super().__init__()
         self.has_time = time_emb_dim is not None
         
@@ -235,7 +234,9 @@ class DiTBlock(nn.Module):
         self.norm2 = nn.LayerNorm(dim, elementwise_affine=(not self.has_time))
         
         mlp_dim = int(dim * mlp_ratio)
-        self.mlp =DWFFN(dim, mlp_dim)
+        self.mlp = nn.Sequential(nn.Linear(dim, mlp_dim),
+                                 nn.GELU(),
+                                 nn.Linear(mlp_dim, dim))
         
         if self.has_time:
             # AdaLN-Zero Initialization setup
@@ -276,7 +277,7 @@ class DiTBottleneck(nn.Module):
         head_dim = dim // num_heads
         
         assert dim % num_heads == 0, "dim must be divisible by num_heads"
-        assert head_dim % 2 == 0, "head_dim must be even to safely apply split 2D RoPE"
+        assert head_dim % 4 == 0, "head_dim must be even to safely apply split 2D RoPE"
         
         self.rope_gen = RoPE2D(head_dim)
         self.blocks = nn.ModuleList([
