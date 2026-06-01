@@ -53,20 +53,6 @@ def model_factory(model_name, config, device):
         "DemoNAFNetDITSigmoid": DemoNAFNetDITSigmoid,
         "DemoNAFNetDITActivation": DemoNAFNetDITActivation,
     }
-    model_class = models_map.get(model_name, DemoNAFNet)
-    kwargs = {
-        "in_channels": config['in_channels'],
-        "width": config["width"],
-        "middle_blk_num": config["middle_blk_num"],
-        "enc_blk_nums": config["enc_blk_nums"],
-        "dec_blk_nums": config["dec_blk_nums"],
-        "mask": config['residual_mask']
-    }
-    
-    if model_name in ["DemoRestormer", "DemoNAFNetDIT"]:
-        kwargs["num_heads"] = config['num_heads']
-        
-    return model_class(**kwargs).to(device)
     try:
         model_class = models_map.get(model_name, DemoNAFNet)
         kwargs = {
