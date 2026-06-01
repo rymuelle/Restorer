@@ -97,6 +97,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+class RMSNorm(nn.Module):
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        norm = x.pow(2).mean(-1, keepdim=True)
+        return x * torch.rsqrt(norm + self.eps) * self.weight
+
 class RoPE2D(nn.Module):
     """Dynamically generates 2D Axial Rotary Position Embeddings."""
     def __init__(self, head_dim):
@@ -164,6 +175,9 @@ class RoPEAttention(nn.Module):
         
         self.qkv = nn.Linear(dim, dim * 3, bias=True)
         self.proj = nn.Linear(dim, dim, bias=True)
+        
+        self.q_norm = RMSNorm(self.head_dim)
+        self.k_norm = RMSNorm(self.head_dim)
 
     def forward(self, x, rope_mats):
         B, L, C = x.shape
@@ -174,6 +188,9 @@ class RoPEAttention(nn.Module):
         q = apply_rope_2d(q, rope_mats)
         k = apply_rope_2d(k, rope_mats)
         
+        # QK norm
+        q, k = self.q_norm(q), self.k_norm(k)
+
         # Standard scaled dot-product attention
         # attn = (q @ k.transpose(-2, -1)) * self.scale
         # attn = attn.softmax(dim=-1)
