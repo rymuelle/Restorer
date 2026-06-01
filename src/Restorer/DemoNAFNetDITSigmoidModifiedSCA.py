@@ -207,9 +207,26 @@ class RoPEAttention(nn.Module):
         out = out.transpose(1, 2).contiguous().view(B, L, C)
         return self.proj(out)
 
+class DWFFN(nn.Module):
+    def __init__(self, dim, mlp_dim):
+        super().__init__()
+        self.conv1 = nn.Conv2d(dim, mlp_dim, 1)
+        self.conv2 = nn.Conv2d(mlp_dim, mlp_dim, kernel_size=3, padding=1, groups=dim)
+        self.act = SimpleGate()
+        self.conv3 = nn.Conv2d(mlp_dim // 2, dim, 1)
 
+    def forward(self, x, H, W):
+        B, N, C = x.shape
+        x = x.transpose(1, 2).reshape(B, C, H, W)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.act(x)
+        x = self.conv3(x)
+        x = x.flatten(2).transpose(1, 2)
+        return x
+    
 class DiTBlock(nn.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=4.0, time_emb_dim=None):
+    def __init__(self, dim, num_heads, mlp_ratio=2.0, time_emb_dim=None):
         super().__init__()
         self.has_time = time_emb_dim is not None
         
@@ -218,11 +235,7 @@ class DiTBlock(nn.Module):
         self.norm2 = nn.LayerNorm(dim, elementwise_affine=(not self.has_time))
         
         mlp_dim = int(dim * mlp_ratio)
-        self.mlp = nn.Sequential(
-            nn.Linear(dim, mlp_dim),
-            nn.GELU(),
-            nn.Linear(mlp_dim, dim)
-        )
+        self.mlp =DWFFN(dim, mlp_dim)
         
         if self.has_time:
             # AdaLN-Zero Initialization setup
