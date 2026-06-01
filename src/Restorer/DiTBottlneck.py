@@ -1,0 +1,210 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.eps = eps
+
+    def forward(self, x):
+        norm = x.pow(2).mean(-1, keepdim=True)
+        return x * torch.rsqrt(norm + self.eps) * self.weight
+
+
+class SimpleGEGate(nn.Module):
+    def forward(self, x):
+        x1, x2 = x.chunk(2, dim=1)
+        return x1 * nn.functional.gelu(x2)
+
+
+class RoPE2D(nn.Module):
+    """Dynamically generates 2D Axial Rotary Position Embeddings."""
+    def __init__(self, head_dim):
+        super().__init__()
+        self.head_dim = head_dim
+        self.dim = head_dim // 2  # Split channels evenly between H and W
+        
+        # Precompute the inverse frequencies for 1D RoPE on each axis
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, self.dim, 2).float() / self.dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+        # Cache matrices to avoid duplicate computation
+        self.rope_cache = {}
+
+    def _get_sin_cos(self, pos):
+        # pos: (Length,) -> returns (Length, dim)
+        sinusoid_inp = torch.outer(pos, self.inv_freq)
+        emb = torch.cat((sinusoid_inp, sinusoid_inp), dim=-1)
+        return emb.sin(), emb.cos()
+
+    def forward(self, H, W, device):
+        cache_key = (H, W, str(device))
+        if cache_key in self.rope_cache:
+            return self.rope_cache[cache_key]
+            
+        pos_h = torch.arange(H, device=device, dtype=torch.float32)
+        pos_w = torch.arange(W, device=device, dtype=torch.float32)
+        
+        sin_h, cos_h = self._get_sin_cos(pos_h)
+        sin_w, cos_w = self._get_sin_cos(pos_w)
+        
+        # Broadcast across the spatial grid
+        sin_h = sin_h.unsqueeze(1).expand(-1, W, -1)
+        cos_h = cos_h.unsqueeze(1).expand(-1, W, -1)
+        sin_w = sin_w.unsqueeze(0).expand(H, -1, -1)
+        cos_w = cos_w.unsqueeze(0).expand(H, -1, -1)
+        
+        # Flatten to sequence dimension (H*W, dim) and add batch/head dimensions
+        sin_h = sin_h.reshape(-1, self.dim).unsqueeze(0).unsqueeze(0)
+        cos_h = cos_h.reshape(-1, self.dim).unsqueeze(0).unsqueeze(0)
+        sin_w = sin_w.reshape(-1, self.dim).unsqueeze(0).unsqueeze(0)
+        cos_w = cos_w.reshape(-1, self.dim).unsqueeze(0).unsqueeze(0)
+
+        # Cache results 
+        self.rope_cache[cache_key] = ((sin_h, cos_h), (sin_w, cos_w))
+        return (sin_h, cos_h), (sin_w, cos_w)
+
+
+def rotate_half(x):
+    d = x.shape[-1]
+    return torch.cat((-x[..., d // 2:], x[..., :d // 2]), dim=-1)
+
+
+def apply_rope_2d(x, rope_mats):
+    # x shape: (B, num_heads, L, head_dim)
+    (sin_h, cos_h), (sin_w, cos_w) = rope_mats
+    dim = x.shape[-1] // 2
+    
+    # Process independent halves for H and W components
+    x_h, x_w = x[..., :dim], x[..., dim:]
+    
+    x_h = (x_h * cos_h) + (rotate_half(x_h) * sin_h)
+    x_w = (x_w * cos_w) + (rotate_half(x_w) * sin_w)
+    
+    return torch.cat([x_h, x_w], dim=-1)
+
+
+class RoPEAttention(nn.Module):
+    def __init__(self, dim, num_heads):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        
+        self.qkv = nn.Linear(dim, dim * 3, bias=True)
+        self.proj = nn.Linear(dim, dim, bias=True)
+        
+        self.q_norm = RMSNorm(self.head_dim)
+        self.k_norm = RMSNorm(self.head_dim)
+
+    def forward(self, x, rope_mats):
+        B, L, C = x.shape
+        qkv = self.qkv(x).reshape(B, L, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+
+        # QK norm
+        q, k = self.q_norm(q), self.k_norm(k)
+
+        # Apply axial rotary embeddings to queries and keys
+        q = apply_rope_2d(q, rope_mats)
+        k = apply_rope_2d(k, rope_mats)
+        
+        # Standard scaled dot-product attention
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+        out = out.transpose(1, 2).contiguous().view(B, L, C)
+        return self.proj(out)
+
+
+class DWFFN(nn.Module):
+    def __init__(self, dim, mlp_dim):
+        super().__init__()
+        self.conv1 = nn.Conv2d(dim, mlp_dim, 1)
+        self.conv2 = nn.Conv2d(mlp_dim, mlp_dim, kernel_size=3, padding=1, groups=mlp_dim)
+        self.act = SimpleGEGate()
+        self.conv3 = nn.Conv2d(mlp_dim // 2, dim, 1)
+
+    def forward(self, x, H, W):
+        B, N, C = x.shape
+        x = x.transpose(1, 2).reshape(B, C, H, W)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.act(x)
+        x = self.conv3(x)
+        x = x.flatten(2).transpose(1, 2)
+        return x
+    
+
+class DiTBlock(nn.Module):
+    def __init__(self, dim, num_heads, mlp_ratio=2.0, time_emb_dim=None):
+        super().__init__()
+        self.has_time = time_emb_dim is not None
+        
+        self.norm1 = nn.LayerNorm(dim, elementwise_affine=(not self.has_time))
+        self.attn = RoPEAttention(dim, num_heads)
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=(not self.has_time))
+        
+        mlp_dim = int(dim * mlp_ratio)
+        self.mlp = DWFFN(dim, mlp_dim)
+        
+        if self.has_time:
+            self.adaLN_modulation = nn.Sequential(
+                nn.SiLU(),
+                nn.Linear(time_emb_dim, 6 * dim, bias=True)
+            )
+            nn.init.zeros_(self.adaLN_modulation[1].weight)
+            nn.init.zeros_(self.adaLN_modulation[1].bias)
+
+    def forward(self, x, rope_mats, H, W, t_emb=None):
+        if self.has_time and t_emb is not None:
+            mod = self.adaLN_modulation(t_emb).unsqueeze(1)
+            shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = mod.chunk(6, dim=-1)
+            
+            # Attention Path
+            x_norm = self.norm1(x) * (1 + scale_msa) + shift_msa
+            x = x + gate_msa * self.attn(x_norm, rope_mats)
+            
+            # MLP Path
+            x_norm = self.norm2(x) * (1 + scale_mlp) + shift_mlp
+            x = x + gate_mlp * self.mlp(x_norm, H, W)
+        else:
+            # Deterministic Fallback Path (Now explicitly receives H and W)
+            x = x + self.attn(self.norm1(x), rope_mats)
+            x = x + self.mlp(self.norm2(x), H, W)
+            
+        return x
+
+
+class DiTBottleneck(nn.Module):
+    def __init__(self, dim, depth=4, num_heads=8, mlp_ratio=4.0, time_emb_dim=None):
+        super().__init__()
+        self.dim = dim
+        head_dim = dim // num_heads
+        
+        assert dim % num_heads == 0, "dim must be divisible by num_heads"
+        # Changed assertion to % 4 to support split axial dimensions inside the RoPE grid safely
+        assert head_dim % 4 == 0, "head_dim must be divisible by 4 to safely apply split 2D RoPE"
+        
+        self.rope_gen = RoPE2D(head_dim)
+        self.blocks = nn.ModuleList([
+            DiTBlock(dim, num_heads, mlp_ratio, time_emb_dim)
+            for _ in range(depth)
+        ])
+
+    def forward(self, x, t_emb=None):
+        B, C, H, W = x.shape
+        assert C == self.dim, f"Expected {self.dim} channels, but got {C}."
+        
+        # 1. Transition to sequence structure
+        x_flat = x.permute(0, 2, 3, 1).reshape(B, H * W, C)
+        
+        # 2. Build 2D Rotary Sine/Cosine grids
+        rope_mats = self.rope_gen(H, W, x.device)
+        
+        # 3. Process features through the DiT Stack (Passing H and W coordinates down)
+        for block in self.blocks:
+            x_flat = block(x_flat, rope_mats, H, W, t_emb=t_emb)
+            
+        # 4. Restore original image block geometry
+        out = x_flat.reshape(B, H, W, C).permute(0, 3, 1, 2).contiguous()
+        return out

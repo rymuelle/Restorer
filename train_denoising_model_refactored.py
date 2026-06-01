@@ -27,7 +27,8 @@ from src.Restorer.DemoNAFNetDIT import DemoNAFNetDIT
 from src.Restorer.DemoNAFNet import DemoNAFNet
 from src.Restorer.DemoNAFNetDITSigmoid import DemoNAFNetDITSigmoid
 from src.Restorer.DemoNAFNetDITActivation import DemoNAFNetDITActivation
-
+from src.Restorer.DemoNAFNetDITSigmoidModifiedSCA import DemoNAFNetDITSigmoidModifiedSCA
+from src.Restorer.DemoRestormerDiT import DemoRestormerDiT
 
 def measure_flops(model, device, crop_size, epoch):
     """Measures total FLOPs based on the current scheduled crop size."""
@@ -52,6 +53,8 @@ def model_factory(model_name, config, device):
         "DemoNAFNet": DemoNAFNet,
         "DemoNAFNetDITSigmoid": DemoNAFNetDITSigmoid,
         "DemoNAFNetDITActivation": DemoNAFNetDITActivation,
+        "DemoNAFNetDITSigmoidModifiedSCA": DemoNAFNetDITSigmoidModifiedSCA,
+        "DemoRestormerDiT": DemoRestormerDiT,
     }
     try:
         model_class = models_map.get(model_name, DemoNAFNet)
@@ -66,7 +69,9 @@ def model_factory(model_name, config, device):
         
         if model_name in ["DemoRestormer", "DemoNAFNetDIT"]:
             kwargs["num_heads"] = config['num_heads']
-            
+        if model_name in ["DemoRestormerDiT"]:
+            kwargs["num_heads"] = config['num_heads']      
+            kwargs["DiTHeads"] = config['DiTHeads']     
         return model_class(**kwargs).to(device)
     except:
         model_uri = f"runs:/{CONFIG['model']}/model"
