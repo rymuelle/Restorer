@@ -119,6 +119,9 @@ class RoPE2D(nn.Module):
         inv_freq = 1.0 / (10000 ** (torch.arange(0, self.dim, 2).float() / self.dim))
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
+        # Cache matricies to avoid duplicate computation
+        self.rope_cache = {}
+
     def _get_sin_cos(self, pos):
         # pos: (Length,) -> returns (Length, dim)
         sinusoid_inp = torch.outer(pos, self.inv_freq)
@@ -126,6 +129,8 @@ class RoPE2D(nn.Module):
         return emb.sin(), emb.cos()
 
     def forward(self, H, W, device):
+        if (H, W) in self.rope_cache:
+            return self.rope_cache[(H, W, str(device))]
         pos_h = torch.arange(H, device=device, dtype=torch.float32)
         pos_w = torch.arange(W, device=device, dtype=torch.float32)
         
@@ -143,7 +148,9 @@ class RoPE2D(nn.Module):
         cos_h = cos_h.reshape(-1, self.dim).unsqueeze(0).unsqueeze(0)
         sin_w = sin_w.reshape(-1, self.dim).unsqueeze(0).unsqueeze(0)
         cos_w = cos_w.reshape(-1, self.dim).unsqueeze(0).unsqueeze(0)
-        
+
+        # Cache results
+        self.rope_cache[(H, W, str(device))] = ((sin_h, cos_h), (sin_w, cos_w))
         return (sin_h, cos_h), (sin_w, cos_w)
 
 
