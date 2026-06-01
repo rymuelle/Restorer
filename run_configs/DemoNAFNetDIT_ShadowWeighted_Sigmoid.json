@@ -1,9 +1,9 @@
 {
-    "model_name": "DemoNAFNet_noraf_ShadowWeightedL1_Sigmoid",
+    "model_name": "DemoNAFNet_noraf_ShadowWeightedL1_Sigmoid_v2",
     "experiment_name": "BaseDenoising",
     "lr": 5e-4,
     "sched_end_factor": 1e-6,
-    "epochs": 100,
+    "epochs": 3000,
     "seed": 42,
     "num_workers": 16,
     "device": "cuda",
