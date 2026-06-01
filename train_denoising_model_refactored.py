@@ -25,6 +25,8 @@ from src.Restorer.DemoNAFNetMamba import DemoNAFNetMamba
 from src.Restorer.DemoNAFNetEAMamba import DemoNAFNetEAMamba
 from src.Restorer.DemoNAFNetDIT import DemoNAFNetDIT
 from src.Restorer.DemoNAFNet import DemoNAFNet
+from src.Restorer.DemoNAFNetDITSigmoid import DemoNAFNetDITSigmoid
+from src.Restorer.DemoNAFNetDITActivation import DemoNAFNetDITActivation
 
 
 def measure_flops(model, device, crop_size, epoch):
@@ -47,8 +49,24 @@ def model_factory(model_name, config, device):
         "DemoNAFNetMamba": DemoNAFNetMamba,
         "DemoNAFNetEAMamba": DemoNAFNetEAMamba,
         "DemoNAFNetDIT": DemoNAFNetDIT,
-        "DemoNAFNet": DemoNAFNet
+        "DemoNAFNet": DemoNAFNet,
+        "DemoNAFNetDITSigmoid": DemoNAFNetDITSigmoid,
+        "DemoNAFNetDITActivation": DemoNAFNetDITActivation,
     }
+    model_class = models_map.get(model_name, DemoNAFNet)
+    kwargs = {
+        "in_channels": config['in_channels'],
+        "width": config["width"],
+        "middle_blk_num": config["middle_blk_num"],
+        "enc_blk_nums": config["enc_blk_nums"],
+        "dec_blk_nums": config["dec_blk_nums"],
+        "mask": config['residual_mask']
+    }
+    
+    if model_name in ["DemoRestormer", "DemoNAFNetDIT"]:
+        kwargs["num_heads"] = config['num_heads']
+        
+    return model_class(**kwargs).to(device)
     try:
         model_class = models_map.get(model_name, DemoNAFNet)
         kwargs = {
